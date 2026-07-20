@@ -1,0 +1,76 @@
+app:
+  name: hench
+  group: personal
+
+backend:
+  enabled: true
+  image:
+    repository: ncging/hench-backend
+    # Bumped to the commit SHA by .github/workflows/build-deploy.yml on each
+    # push to main; ArgoCD picks up the change.
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 1
+  port: 8000
+  env:
+    LOG_LEVEL: info
+    PLAID_ENV: sandbox
+    PLAID_PRODUCTS: '["transactions"]'
+    PLAID_COUNTRY_CODES: '["US"]'
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+frontend:
+  enabled: true
+  image:
+    repository: ncging/hench-frontend
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 1
+  port: 80
+  fqdn: hench.nickknows.net
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+
+# Nightly transactions sync (k8s CronJob running the CLI entrypoint).
+sync:
+  enabled: true
+  schedule: "0 7 * * *" # 07:00 UTC nightly
+
+ingress:
+  enabled: true
+  className: traefik
+  clusterIssuer: letsencrypt-cloudflare
+  externalDnsTarget: "8.44.158.127"
+
+# OpenBao (via ESO) — PLAID_CLIENT_ID / PLAID_SECRET / FERNET_KEY live under
+# this kv path with the property names below.
+secrets:
+  secretPath: hench/plaid
+  clientIdKey: client_id
+  secretKey: secret
+  fernetKey: fernet_key
+
+cnpg:
+  enabled: true
+  instances: 1
+  storage:
+    size: 5Gi
+    storageClass: rook-ceph-block
+  postgresql:
+    shared_buffers: "128MB"
+    effective_cache_size: "256MB"
+  backup:
+    enabled: true
+    retentionPolicy: "7d"
+    snapshotClass: rook-ceph-block

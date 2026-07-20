@@ -1,0 +1,39 @@
+{{- if .Values.cnpg.enabled }}
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ include "hench.cnpgClusterName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hench.labels" . | nindent 4 }}
+    component: database
+  annotations:
+    argocd.argoproj.io/sync-options: ServerSideApply=true
+spec:
+  instances: {{ .Values.cnpg.instances }}
+  imageName: ghcr.io/cloudnative-pg/postgresql:16
+
+  storage:
+    size: {{ .Values.cnpg.storage.size }}
+    storageClass: {{ .Values.cnpg.storage.storageClass }}
+
+  bootstrap:
+    initdb:
+      database: hench
+      owner: hench
+
+  postgresql:
+    parameters:
+      shared_buffers: {{ .Values.cnpg.postgresql.shared_buffers | quote }}
+      effective_cache_size: {{ .Values.cnpg.postgresql.effective_cache_size | quote }}
+
+  {{- if .Values.cnpg.backup.enabled }}
+  backup:
+    volumeSnapshot:
+      className: {{ .Values.cnpg.backup.snapshotClass }}
+    retentionPolicy: {{ .Values.cnpg.backup.retentionPolicy | quote }}
+  {{- end }}
+
+  monitoring:
+    enablePodMonitor: true
+{{- end }}
