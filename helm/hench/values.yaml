@@ -1,14 +1,13 @@
 app:
   name: hench
   group: personal
-
 backend:
   enabled: true
   image:
     repository: ncging/hench-backend
     # Bumped to the commit SHA by .github/workflows/build-deploy.yml on each
     # push to main; ArgoCD picks up the change.
-    tag: latest
+    tag: sha-1016280
     pullPolicy: IfNotPresent
   replicas: 1
   port: 8000
@@ -24,12 +23,11 @@ backend:
     limits:
       cpu: 500m
       memory: 512Mi
-
 frontend:
   enabled: true
   image:
     repository: ncging/hench-frontend
-    tag: latest
+    tag: sha-1016280
     pullPolicy: IfNotPresent
   replicas: 1
   port: 80
@@ -41,18 +39,15 @@ frontend:
     limits:
       cpu: 100m
       memory: 64Mi
-
 # Nightly transactions sync (k8s CronJob running the CLI entrypoint).
 sync:
   enabled: true
   schedule: "0 7 * * *" # 07:00 UTC nightly
-
 ingress:
   enabled: true
   className: traefik
   clusterIssuer: letsencrypt-cloudflare
   externalDnsTarget: "8.44.158.127"
-
 # OpenBao (via ESO) — PLAID_CLIENT_ID / PLAID_SECRET / FERNET_KEY live under
 # this kv path with the property names below.
 secrets:
@@ -60,7 +55,6 @@ secrets:
   clientIdKey: client_id
   secretKey: secret
   fernetKey: fernet_key
-
 cnpg:
   enabled: true
   instances: 1
