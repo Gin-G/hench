@@ -55,6 +55,16 @@ secrets:
   clientIdKey: client_id
   secretKey: secret
   fernetKey: fernet_key
+  # Which store the ExternalSecret reads through. The default is the
+  # cluster-wide store defined in Gin-G/argo-k8s-stuff
+  # (manifests/external-secrets), which uses OpenBao's Kubernetes auth method -
+  # no openbao-credentials secret is needed in this namespace.
+  store:
+    name: openbao-k8s-backend
+    kind: ClusterSecretStore
+    # Render a namespaced, token-authenticated SecretStore instead. Requires an
+    # openbao-credentials secret in this namespace, created out of band.
+    create: false
 cnpg:
   enabled: true
   instances: 1
