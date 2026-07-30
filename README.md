@@ -1,6 +1,6 @@
 # hench
 
-Self-hosted personal finance dashboard — a Monarch alternative. Pulls bank
+Self-hosted personal finance dashboard. Pulls bank
 transactions via Plaid and renders a monthly Sankey cash-flow chart
 (income → category → subcategory), plus a transactions table with inline
 category overrides.
