@@ -73,6 +73,11 @@ async def create_link_token(
         kwargs["access_token"] = decrypt(item.access_token)
     else:
         kwargs["products"] = [Products(p) for p in settings.plaid_products]
+        # Only valid on an initial link — update mode rejects it.
+        if settings.plaid_additional_consented_products:
+            kwargs["additional_consented_products"] = [
+                Products(p) for p in settings.plaid_additional_consented_products
+            ]
 
     request = LinkTokenCreateRequest(**kwargs)
     resp = client.link_token_create(request)

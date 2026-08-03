@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -35,6 +36,70 @@ class ItemOut(BaseModel):
     institution_name: str | None
     status: str
     last_synced_at: datetime | None
+
+
+# --- Accounts, balances, liabilities ---------------------------------------
+# Money on these stays Decimal rather than float, because these feed payoff and
+# allocation maths rather than a chart. Pydantic v2 serialises Decimal to a
+# JSON *string* ("41.00", not 41.0), which avoids a binary-float round trip
+# entirely — but means the frontend must parse rather than assume a number.
+# The older TransactionOut/SankeyResponse fields stay float deliberately, so
+# nothing currently rendering a chart changes shape.
+class LiabilityOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    liability_type: str
+    next_payment_due_date: date | None = None
+    minimum_payment_amount: Decimal | None = None
+    last_payment_amount: Decimal | None = None
+    last_payment_date: date | None = None
+    is_overdue: bool | None = None
+    last_statement_balance: Decimal | None = None
+    last_statement_issue_date: date | None = None
+    purchase_apr: Decimal | None = None
+    interest_rate_percentage: Decimal | None = None
+    origination_principal_amount: Decimal | None = None
+    expected_payoff_date: date | None = None
+    loan_status: str | None = None
+
+
+class AccountOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    account_id: str
+    item_id: str
+    name: str | None = None
+    official_name: str | None = None
+    mask: str | None = None
+    type: str | None = None
+    subtype: str | None = None
+    current_balance: Decimal | None = None
+    available_balance: Decimal | None = None
+    credit_limit: Decimal | None = None
+    iso_currency_code: str | None = None
+    balances_updated_at: datetime | None = None
+    institution_name: str | None = None
+    liability: LiabilityOut | None = None
+
+
+class RecurringStreamOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    stream_id: str
+    account_id: str
+    direction: str
+    description: str | None = None
+    merchant_name: str | None = None
+    frequency: str | None = None
+    average_amount: Decimal | None = None
+    last_amount: Decimal | None = None
+    first_date: date | None = None
+    last_date: date | None = None
+    predicted_next_date: date | None = None
+    is_active: bool
+    status: str | None = None
+    category_primary: str | None = None
+    category_detailed: str | None = None
 
 
 # --- Sync ------------------------------------------------------------------

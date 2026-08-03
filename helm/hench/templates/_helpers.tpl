@@ -50,6 +50,10 @@ Plaid + Fernet secrets come from the ESO-managed config secret.
   value: {{ .Values.backend.env.PLAID_ENV | quote }}
 - name: PLAID_PRODUCTS
   value: {{ .Values.backend.env.PLAID_PRODUCTS | quote }}
+{{- with .Values.backend.env.PLAID_ADDITIONAL_CONSENTED_PRODUCTS }}
+- name: PLAID_ADDITIONAL_CONSENTED_PRODUCTS
+  value: {{ . | quote }}
+{{- end }}
 - name: PLAID_COUNTRY_CODES
   value: {{ .Values.backend.env.PLAID_COUNTRY_CODES | quote }}
 - name: PLAID_WEBHOOK_URL

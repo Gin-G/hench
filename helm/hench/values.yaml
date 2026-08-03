@@ -15,6 +15,11 @@ backend:
     LOG_LEVEL: info
     PLAID_ENV: production
     PLAID_PRODUCTS: '["transactions"]'
+    # Consented at Link time, billed only when the endpoint is first called.
+    # Must be set before the first bank is linked — the products an Item was
+    # created with are fixed, so adding this later means re-authenticating
+    # every institution through Link update mode.
+    PLAID_ADDITIONAL_CONSENTED_PRODUCTS: '["liabilities"]'
     PLAID_COUNTRY_CODES: '["US"]'
   resources:
     requests:

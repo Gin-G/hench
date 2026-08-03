@@ -21,6 +21,7 @@ from ..crypto import decrypt
 from ..models import Account, Item, Transaction
 from ..plaid_client import get_plaid_client
 from ..schemas import SyncResult
+from . import enrich
 from . import rules as rules_svc
 
 log = logging.getLogger("hench.sync")
@@ -161,6 +162,14 @@ async def sync_item(session: AsyncSession, item: Item) -> SyncResult:
     item.last_synced_at = datetime.now(timezone.utc)
     await session.flush()
 
+    # Forward-looking snapshots. These run after the transaction upserts so
+    # the accounts they key off definitely exist, and they are best-effort:
+    # a bank that does not support liabilities must not fail the whole sync.
+    await enrich.refresh_balances(session, item, access_token)
+    await enrich.refresh_liabilities(session, item, access_token)
+    await enrich.refresh_recurring(session, item, access_token)
+    await session.flush()
+
     log.info(
         "synced item=%s added=%d modified=%d removed=%d",
         item.item_id,
@@ -179,6 +188,13 @@ async def sync_all(session: AsyncSession) -> list[SyncResult]:
     for item in items:
         try:
             results.append(await sync_item(session, item))
+            # Commit per Item so one Item's failure cannot discard the work of
+            # the Items that already succeeded.
+            await session.commit()
         except Exception:  # noqa: BLE001 - one bad item shouldn't stop the rest
             log.exception("sync failed for item=%s", item.item_id)
+            # Without this the session stays in pending-rollback and every
+            # subsequent Item fails on a PendingRollbackError rather than on
+            # anything to do with that Item.
+            await session.rollback()
     return results

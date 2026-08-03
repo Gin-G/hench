@@ -34,6 +34,16 @@ class Settings(BaseSettings):
     plaid_products: list[str] = Field(
         default_factory=lambda: ["transactions"], alias="PLAID_PRODUCTS"
     )
+    # Products consented to at Link time but not initialised with the Item.
+    # Plaid only bills these once the endpoint is actually called, and unlike
+    # `products` they do not filter out institutions that lack support. The
+    # products an Item was linked with are fixed, so anything that might be
+    # wanted later has to be listed here *before* the first link — otherwise
+    # every institution needs re-authenticating through Link update mode.
+    plaid_additional_consented_products: list[str] = Field(
+        default_factory=lambda: ["liabilities"],
+        alias="PLAID_ADDITIONAL_CONSENTED_PRODUCTS",
+    )
     plaid_country_codes: list[str] = Field(
         default_factory=lambda: ["US"], alias="PLAID_COUNTRY_CODES"
     )
