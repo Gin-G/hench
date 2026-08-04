@@ -57,7 +57,10 @@ liabilities populate immediately on link.
 - [x] Secrets via the openbao-k8s-backend ClusterSecretStore
 - [x] Confirm whether hench.nickknows.net answers off-network, since every route is unauthenticated — it did, unauthenticated, serving real Chase data over Cloudflare
 - [x] Put auth in front of the API via Traefik forwardAuth, an OIDC proxy or a LAN-only ingress — Traefik BasicAuth over the whole vhost, htpasswd from OpenBao at hench/basicauth
+- [x] Add NetworkPolicies so the API and database are not reachable from other namespaces — in-cluster pods could hit hench-backend:8000 directly and bypass ingress BasicAuth entirely
 - [ ] Replace ingress BasicAuth with Cloudflare Access or an OIDC proxy, since basic auth has no session, no MFA and one shared credential
+- [ ] Consider authenticating the API itself rather than only at the ingress, since NetworkPolicy is now the only thing preventing an in-cluster bypass
+- [ ] Encrypt the CNPG volume at rest: rook-ceph-block has no encrypted:true, so transactions, balances, masks and liabilities sit in plaintext on the OSDs (Plaid access tokens are Fernet-encrypted and unaffected)
 - [ ] Restore Plaid webhook delivery, which BasicAuth now blocks — needs a path exemption plus Plaid-Verification JWT checking, so sync is nightly-only until then
 - [x] Fix the UI not re-rendering after a sync or a bank link: App.svelte reloads only months and items, while Sankey and Transactions re-fetch solely on a month prop change
 - [ ] Verify the Plaid-Verification JWT on the webhook, which is currently unchecked

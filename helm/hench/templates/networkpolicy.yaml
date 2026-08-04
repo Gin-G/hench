@@ -1,0 +1,121 @@
+{{- if .Values.networkPolicy.enabled }}
+{{/*
+Namespace-local firewall.
+
+Two gaps this closes, both demonstrated rather than theorised:
+
+  1. hench-cnpg-rw:5432 answered from a pod in the `default` namespace. Any
+     compromised workload anywhere in the cluster could reach the finance
+     database and start guessing credentials.
+
+  2. Worse — hench-backend:8000 served /accounts in full to an unauthenticated
+     pod in `default`. BasicAuth is enforced by Traefik at the ingress, so
+     anything already inside the cluster simply routes around it. The API has
+     no authentication of its own.
+
+Ingress only. Egress is deliberately left unrestricted: the backend needs
+Plaid, DNS and the API server, and locking that down trades real breakage risk
+for little gain when the exposure is inbound.
+
+Kubelet probes originate from the node, not a pod, so no podSelector can ever
+match them. Cilium with enable-host-firewall unset (this cluster) does not
+enforce policy on host-to-pod traffic, so probes survive regardless — the
+explicit node CIDRs below are belt and braces in case that assumption stops
+holding, and are why a mistake here does not silently kill the pods.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Values.app.name }}-cnpg
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hench.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: {{ include "hench.cnpgClusterName" . }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # Postgres itself: only the API and the nightly sync job.
+    - from:
+        - podSelector:
+            matchLabels:
+              app: {{ .Values.app.name }}
+      ports:
+        - protocol: TCP
+          port: 5432
+    # The CloudNativePG operator manages the cluster and needs broad access.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.cnpgOperatorNamespace }}
+    # Replication between instances of this cluster (single instance today).
+    - from:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: {{ include "hench.cnpgClusterName" . }}
+    # Instance-manager status port and the metrics exporter. Left open to all
+    # sources on purpose: probes are node-sourced and Prometheus may move.
+    # Neither port exposes row data.
+    - ports:
+        - protocol: TCP
+          port: 8000
+        - protocol: TCP
+          port: 9187
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Values.app.name }}-backend
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hench.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ .Values.app.name }}
+      component: backend
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # Only the ingress controller, so every request has passed BasicAuth.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressControllerNamespace }}
+        {{- range .Values.networkPolicy.nodeCIDRs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.backend.port }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Values.app.name }}-frontend
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hench.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ .Values.app.name }}
+      component: frontend
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressControllerNamespace }}
+        {{- range .Values.networkPolicy.nodeCIDRs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.frontend.port }}
+{{- end }}

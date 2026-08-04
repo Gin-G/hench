@@ -60,6 +60,21 @@ ingress:
   basicAuth:
     enabled: true
     realm: hench
+# Namespace-local firewall. BasicAuth is enforced at the ingress, so without
+# this anything already running in the cluster can reach the API and the
+# database directly and route around it entirely.
+networkPolicy:
+  enabled: true
+  # Namespace the ingress controller runs in — the only permitted source of
+  # HTTP traffic to the API and UI.
+  ingressControllerNamespace: traefik
+  cnpgOperatorNamespace: cnpg
+  # Node addresses, allowed so kubelet probes survive even if Cilium's host
+  # firewall is ever enabled. Update these if the cluster gains nodes.
+  nodeCIDRs:
+    - 192.168.4.45/32
+    - 192.168.4.57/32
+    - 192.168.5.120/32
 # OpenBao (via ESO) — PLAID_CLIENT_ID / PLAID_SECRET / FERNET_KEY live under
 # this kv path with the property names below.
 secrets:
