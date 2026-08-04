@@ -7,7 +7,7 @@ progress: 75
 
 Self-hosted personal finance dashboard. Plaid pulls bank transactions; the UI renders a monthly Sankey cash-flow chart plus a transactions table with inline category overrides. FastAPI + async SQLAlchemy + CNPG Postgres, Svelte 5 + ECharts, deployed to K3s by ArgoCD.
 
-Running against Plaid **production** since 2026-08-03. Production keys live in OpenBao at `hench/plaid`; the chart pointed at the sandbox host until then, which made every `/link/create_link_token` return 500 on `INVALID_API_KEYS` (Plaid issues a separate secret per environment). No real bank is linked yet. Secrets come from OpenBao through the `openbao-k8s-backend` ClusterSecretStore (Kubernetes auth, no per-namespace token). `fernet_key` must never be rotated casually — it encrypts Plaid access tokens at rest, so replacing it orphans every linked Item.
+Running against Plaid **production** since 2026-08-03. Production keys live in OpenBao at `hench/plaid`; the chart pointed at the sandbox host until then, which made every `/link/create_link_token` return 500 on `INVALID_API_KEYS` (Plaid issues a separate secret per environment). Chase is linked and holds real data — 6 accounts, 3 credit-card liabilities, ~300 transactions. The whole vhost sits behind Traefik BasicAuth: the app has no auth of its own and the FQDN is public through Cloudflare, so until that landed anyone who knew the hostname could read the lot. Secrets come from OpenBao through the `openbao-k8s-backend` ClusterSecretStore (Kubernetes auth, no per-namespace token). `fernet_key` must never be rotated casually — it encrypts Plaid access tokens at rest, so replacing it orphans every linked Item.
 
 Full review notes, including the reasoning behind the open items, are in `REVIEW.md`.
 
@@ -55,8 +55,11 @@ liabilities populate immediately on link.
 - [x] Alembic migrations in an init container
 - [x] CI/CD build, push, tag bump and ArgoCD rollout
 - [x] Secrets via the openbao-k8s-backend ClusterSecretStore
-- [ ] Confirm whether hench.nickknows.net answers off-network, since every route is unauthenticated
-- [ ] Put auth in front of the API via Traefik forwardAuth, an OIDC proxy or a LAN-only ingress
+- [x] Confirm whether hench.nickknows.net answers off-network, since every route is unauthenticated — it did, unauthenticated, serving real Chase data over Cloudflare
+- [x] Put auth in front of the API via Traefik forwardAuth, an OIDC proxy or a LAN-only ingress — Traefik BasicAuth over the whole vhost, htpasswd from OpenBao at hench/basicauth
+- [ ] Replace ingress BasicAuth with Cloudflare Access or an OIDC proxy, since basic auth has no session, no MFA and one shared credential
+- [ ] Restore Plaid webhook delivery, which BasicAuth now blocks — needs a path exemption plus Plaid-Verification JWT checking, so sync is nightly-only until then
+- [ ] Fix the UI not re-rendering after a sync or a bank link: App.svelte reloads only months and items, while Sankey and Transactions re-fetch solely on a month prop change
 - [ ] Verify the Plaid-Verification JWT on the webhook, which is currently unchecked
 - [x] Fix sync_all error handling, which leaves the session in pending-rollback so one bad Item fails the rest
 - [ ] Make category filtering honour overrides instead of matching only category_primary and pfc_primary

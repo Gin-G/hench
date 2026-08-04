@@ -20,6 +20,10 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{ .Values.app.name }}-config
 {{- end -}}
 
+{{- define "hench.basicAuthSecret" -}}
+{{ .Values.app.name }}-basicauth
+{{- end -}}
+
 {{/*
 Backend container env, shared by the API Deployment, its alembic init
 container, and the sync CronJob. DATABASE_URL comes from the CNPG app secret;

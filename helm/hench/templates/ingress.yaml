@@ -10,8 +10,22 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: {{ .Values.ingress.clusterIssuer | quote }}
     external-dns.alpha.kubernetes.io/target: {{ .Values.ingress.externalDnsTarget | quote }}
+    {{- /*
+      Middleware order is significant and Traefik applies them left to right,
+      so basic auth has to precede the path rewrite: an unauthenticated
+      request must be rejected before any routing work happens. The annotation
+      covers every router this Ingress creates, so the UI at / is gated too,
+      not just /api.
+    */}}
+    {{- $mw := list }}
+    {{- if .Values.ingress.basicAuth.enabled }}
+    {{- $mw = append $mw (printf "%s-%s-basic-auth@kubernetescrd" .Release.Namespace .Values.app.name) }}
+    {{- end }}
     {{- if .Values.backend.enabled }}
-    traefik.ingress.kubernetes.io/router.middlewares: {{ printf "%s-%s-strip-api@kubernetescrd" .Release.Namespace .Values.app.name | quote }}
+    {{- $mw = append $mw (printf "%s-%s-strip-api@kubernetescrd" .Release.Namespace .Values.app.name) }}
+    {{- end }}
+    {{- if $mw }}
+    traefik.ingress.kubernetes.io/router.middlewares: {{ join "," $mw | quote }}
     {{- end }}
 spec:
   ingressClassName: {{ .Values.ingress.className }}

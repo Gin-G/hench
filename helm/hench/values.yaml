@@ -53,6 +53,13 @@ ingress:
   className: traefik
   clusterIssuer: letsencrypt-cloudflare
   externalDnsTarget: "8.44.158.127"
+  # HTTP basic auth across the whole vhost, UI and API alike. The app itself
+  # has no authentication, and the FQDN is public, so this is the only thing
+  # standing between the internet and real bank data. Credentials live in
+  # OpenBao (secrets.basicAuthPath), never here.
+  basicAuth:
+    enabled: true
+    realm: hench
 # OpenBao (via ESO) — PLAID_CLIENT_ID / PLAID_SECRET / FERNET_KEY live under
 # this kv path with the property names below.
 secrets:
@@ -60,6 +67,9 @@ secrets:
   clientIdKey: client_id
   secretKey: secret
   fernetKey: fernet_key
+  # htpasswd lines for the ingress basic-auth middleware.
+  basicAuthPath: hench/basicauth
+  basicAuthUsersKey: users
   # Which store the ExternalSecret reads through. The default is the
   # cluster-wide store defined in Gin-G/argo-k8s-stuff
   # (manifests/external-secrets), which uses OpenBao's Kubernetes auth method -

@@ -1,0 +1,33 @@
+{{- if .Values.ingress.basicAuth.enabled }}
+{{/*
+Gate the whole vhost — UI and API — behind HTTP basic auth.
+
+Every route is otherwise unauthenticated, and the FQDN is public through
+Cloudflare, so before this existed anyone who knew the hostname could read
+full transaction history, balances and account metadata. Certificate
+transparency logs publish the hostname, so "nobody knows the URL" was never
+a control.
+
+This deliberately covers /api/webhook too. Plaid's webhook POSTs will be
+rejected, costing real-time SYNC_UPDATES_AVAILABLE syncs and re-auth
+notifications; the nightly CronJob still pulls everything. Leaving that path
+open would mean an unauthenticated endpoint that mutates Item state, and the
+Plaid-Verification JWT is not checked yet.
+
+Credentials come from OpenBao rather than values.yaml — see the
+basicauth ExternalSecret. If the secret is missing Traefik fails the
+middleware and the route 500s, which is the correct direction to fail.
+*/}}
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ .Values.app.name }}-basic-auth
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hench.labels" . | nindent 4 }}
+spec:
+  basicAuth:
+    secret: {{ include "hench.basicAuthSecret" . }}
+    realm: {{ .Values.ingress.basicAuth.realm | quote }}
+    removeHeader: true
+{{- end }}
