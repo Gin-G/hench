@@ -2,7 +2,7 @@
   import * as echarts from "echarts";
   import { api, prettyCategory, fmtMoney } from "./api.js";
 
-  let { month } = $props();
+  let { month, reloadKey = 0 } = $props();
 
   let el;
   let chart;
@@ -77,8 +77,9 @@
       const ro = new ResizeObserver(() => chart.resize());
       ro.observe(el);
     }
-    // referencing month makes this effect re-run on month change
+    // referencing these makes the effect re-run when either changes
     month;
+    reloadKey; // bumped by the parent after a sync or a bank link
     load();
   });
 </script>

@@ -9,6 +9,11 @@
   let month = $state(new Date().toISOString().slice(0, 7));
   let items = $state([]);
   let syncing = $state(false);
+  // Bumped to force Sankey and Transactions to re-fetch. They reload on a
+  // month change alone, so after a sync or a fresh link — where month does not
+  // change — they would otherwise keep showing whatever they fetched on mount,
+  // making a successful sync look like it pulled nothing.
+  let reloadKey = $state(0);
 
   async function loadMeta() {
     const [m, it] = await Promise.all([api.months(), api.items()]);
@@ -17,18 +22,26 @@
     items = it;
   }
 
+  // Refresh the metadata *and* the child views. Only for explicit actions that
+  // change server-side data — the mount path calls loadMeta directly, so the
+  // children are not made to fetch twice on first load.
+  async function reload() {
+    await loadMeta();
+    reloadKey += 1;
+  }
+
   async function sync() {
     syncing = true;
     try {
       await api.syncNow();
-      await loadMeta();
+      await reload();
     } finally {
       syncing = false;
     }
   }
 
   function refresh() {
-    loadMeta();
+    reload();
   }
 
   $effect(() => {

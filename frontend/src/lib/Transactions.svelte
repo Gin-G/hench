@@ -1,7 +1,7 @@
 <script>
   import { api, prettyCategory, fmtMoney } from "./api.js";
 
-  let { month } = $props();
+  let { month, reloadKey = 0 } = $props();
 
   let rows = $state([]);
   let total = $state(0);
@@ -47,6 +47,7 @@
 
   $effect(() => {
     month; // re-run when month changes
+    reloadKey; // ...and when the parent forces a reload after a sync or link
     load();
   });
 </script>

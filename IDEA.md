@@ -59,7 +59,7 @@ liabilities populate immediately on link.
 - [x] Put auth in front of the API via Traefik forwardAuth, an OIDC proxy or a LAN-only ingress — Traefik BasicAuth over the whole vhost, htpasswd from OpenBao at hench/basicauth
 - [ ] Replace ingress BasicAuth with Cloudflare Access or an OIDC proxy, since basic auth has no session, no MFA and one shared credential
 - [ ] Restore Plaid webhook delivery, which BasicAuth now blocks — needs a path exemption plus Plaid-Verification JWT checking, so sync is nightly-only until then
-- [ ] Fix the UI not re-rendering after a sync or a bank link: App.svelte reloads only months and items, while Sankey and Transactions re-fetch solely on a month prop change
+- [x] Fix the UI not re-rendering after a sync or a bank link: App.svelte reloads only months and items, while Sankey and Transactions re-fetch solely on a month prop change
 - [ ] Verify the Plaid-Verification JWT on the webhook, which is currently unchecked
 - [x] Fix sync_all error handling, which leaves the session in pending-rollback so one bad Item fails the rest
 - [ ] Make category filtering honour overrides instead of matching only category_primary and pfc_primary
