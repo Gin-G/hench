@@ -52,7 +52,7 @@ ingress:
   enabled: true
   className: traefik
   clusterIssuer: letsencrypt-cloudflare
-  externalDnsTarget: "8.44.158.127"
+  externalDnsTarget: "75c20a42-2dd1-4297-8a51-3aefbcb3f004.cfargotunnel.com"
   # HTTP basic auth across the whole vhost, UI and API alike. The app itself
   # has no authentication, and the FQDN is public, so this is the only thing
   # standing between the internet and real bank data. Credentials live in
