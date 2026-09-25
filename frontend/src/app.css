@@ -1,13 +1,21 @@
 :root {
-  --bg: #0f1419;
-  --panel: #1a212b;
-  --panel-2: #222b38;
-  --border: #2d3744;
-  --text: #e6edf3;
-  --muted: #8b97a7;
-  --accent: #4ade80;
-  --accent-dim: #2a6b45;
-  --danger: #f87171;
+  /* Palette drawn from the logo (idea_logo.png): the teal and orange of the
+     arrow and the gold of the shield, on a dark ground nudged toward teal.
+     Accent pairs are chosen so accent text on accent-dim stays above 4.5:1. */
+  --bg: #0e1519;
+  --panel: #162027;
+  --panel-2: #1e2a32;
+  --border: #2a3a44;
+  --text: #e7ecee;
+  --muted: #8fa1aa;
+  --accent: #62bccd; /* logo teal, lifted for text on dark */
+  --accent-dim: #123f49; /* logo deep teal */
+  --gold: #c9a862; /* logo shield */
+  --gold-dim: #28251c;
+  --warn: #e0893e; /* logo orange */
+  --danger: #ef6b5f;
+  --hover: #26343d;
+  --accent-hover: #185260;
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
@@ -32,7 +40,7 @@ button {
   transition: background 0.12s ease;
 }
 button:hover {
-  background: #2c3645;
+  background: var(--hover);
 }
 button.primary {
   background: var(--accent-dim);
@@ -40,7 +48,7 @@ button.primary {
   color: var(--accent);
 }
 button.primary:hover {
-  background: #357a52;
+  background: var(--accent-hover);
 }
 
 select,

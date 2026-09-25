@@ -569,8 +569,8 @@
     color: var(--danger);
   }
   tr.payday td {
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-    color: var(--accent);
+    background: var(--gold-dim);
+    color: var(--gold);
     font-size: 0.85rem;
   }
   tr.payday td span + span {
@@ -805,7 +805,7 @@
     background: var(--accent);
   }
   .fill.high {
-    background: #fbbf24;
+    background: var(--warn);
   }
   table {
     width: 100%;

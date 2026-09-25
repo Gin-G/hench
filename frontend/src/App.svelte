@@ -59,7 +59,7 @@
 
 <header>
   <div class="brand">
-    <span class="logo">⊟</span> hench
+    <img class="logo" src="/logo.png" alt="" width="32" height="32" /> hench
   </div>
   <div class="connections">
     {#each items as it}
@@ -120,13 +120,18 @@
     background: var(--panel);
   }
   .brand {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
     font-size: 1.2rem;
     font-weight: 700;
     letter-spacing: 0.02em;
+    color: var(--gold);
   }
   .logo {
-    color: var(--accent);
-    margin-right: 0.3rem;
+    display: block;
+    width: 32px;
+    height: 32px;
   }
   .connections {
     display: flex;

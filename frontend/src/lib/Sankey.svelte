@@ -9,9 +9,59 @@
   let data = $state(null);
   let error = $state(null);
 
+  // Categorical palette in the logo's hues, validated for the dark panel
+  // (lightness band, chroma, colour-blind and normal-vision separation of
+  // neighbours, contrast) with the dataviz validator. Order matters: it is
+  // what keeps the red-green pair apart.
+  const PALETTE = ["#068fa7", "#d27830", "#7b62b8", "#ae8e38", "#c35775", "#4379bc", "#50a064", "#ab5637"];
+  // Colour follows the category, not this month's ranking, so a category
+  // keeps its colour from month to month. The commonest Plaid spending
+  // categories come first and get a slot each; rarer ones share, which the
+  // node labels (every node is named on the chart) make unambiguous.
+  const CATEGORY_ORDER = [
+    "FOOD_AND_DRINK", "GENERAL_MERCHANDISE", "RENT_AND_UTILITIES", "LOAN_PAYMENTS",
+    "TRANSPORTATION", "ENTERTAINMENT", "GENERAL_SERVICES", "MEDICAL",
+    "PERSONAL_CARE", "HOME_IMPROVEMENT", "TRAVEL", "GOVERNMENT_AND_NON_PROFIT",
+    "BANK_FEES", "UNCATEGORIZED",
+  ];
+  // Income and the savings remainder are not spending categories. Names as
+  // sent by services/sankey.py.
+  const NEUTRAL = "#6f818b";
+  const NEUTRAL_NODES = new Set(["Income", "Savings / Unspent"]);
+
+  function categoryColor(name) {
+    let i = CATEGORY_ORDER.indexOf(name);
+    if (i < 0) {
+      // A custom override category: a stable slot from its name.
+      i = [...name].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 0);
+    }
+    return PALETTE[i % PALETTE.length];
+  }
+
+  function nodeColors(links) {
+    // Level-1 targets (fed straight from Income) are categories; anything
+    // they feed is a subcategory and wears its parent's colour.
+    const parent = {};
+    for (const l of links) parent[l.target] = l.source;
+    const colors = {};
+    for (const l of links) {
+      const cat = parent[l.target] && parent[parent[l.target]] ? parent[l.target] : l.target;
+      colors[l.target] = NEUTRAL_NODES.has(cat) ? NEUTRAL : categoryColor(cat);
+    }
+    return colors;
+  }
+
+  function token(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
   function render() {
     if (!chart || !data) return;
-    const nodes = data.nodes.map((n) => ({ name: prettyCategory(n.name) }));
+    const colors = nodeColors(data.links);
+    const nodes = data.nodes.map((n) => ({
+      name: prettyCategory(n.name),
+      itemStyle: { color: colors[n.name] ?? NEUTRAL, borderWidth: 0 },
+    }));
     const links = data.links.map((l) => ({
       source: prettyCategory(l.source),
       target: prettyCategory(l.target),
@@ -21,6 +71,9 @@
       backgroundColor: "transparent",
       tooltip: {
         trigger: "item",
+        backgroundColor: token("--panel-2"),
+        borderColor: token("--border"),
+        textStyle: { color: token("--text") },
         triggerOn: "mousemove",
         formatter: (p) =>
           p.dataType === "edge"
@@ -44,13 +97,13 @@
           emphasis: { focus: "adjacency" },
           lineStyle: { color: "gradient", opacity: 0.45, curveness: 0.5 },
           label: {
-            color: "#e6edf3",
+            color: token("--text"),
             fontSize: 12,
             // params.value is the node's total flow (the $ in/out of that
             // category), so the spend per category shows on the chart itself.
             formatter: (p) => `${p.name}  {v|${fmtMoney(p.value)}}`,
             rich: {
-              v: { color: "#8b97a7", fontSize: 11 },
+              v: { color: token("--muted"), fontSize: 11 },
             },
           },
           data: nodes,
