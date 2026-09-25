@@ -83,6 +83,8 @@ liabilities populate immediately on link.
 - [x] Let accounts be renamed and detected recurring payments be hidden, since Chase names every card "CREDIT CARD" and Plaid detects card interest as a recurring bill — `nickname` and `hidden`, neither written by sync
 - [x] Read the City of Longmont utility bill from its customer portal (no API; login from OpenBao hench/longmont), rate limited to one login per 6h and a day after a rejected password, with the due date estimated from payment history when the portal states none
 - [x] Add /plan: checking less what is due before the next paycheck, plus the 30-day low point as the amount safe to send to the highest-APR debt
+- [x] Read the Xcel gas bill from its "Reminder for your upcoming bill" emails over read-only Gmail OAuth (connected from the UI, token Fernet-encrypted), since Xcel's portal sits behind reCAPTCHA Enterprise
+- [ ] Register the Google OAuth client (hench/google in OpenBao) and connect Gmail from the Bills tab
 - [ ] Add a /forecast endpoint projecting dated cash events and a running balance to a horizon — /plan's low-point walk is the first cut of this
 - [ ] Add an extra-payment what-if over the forecast, returning payoff date, interest saved and cash left over
 - [ ] Add an allocation view for splitting income across bills, debt and savings

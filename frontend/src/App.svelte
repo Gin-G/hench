@@ -5,7 +5,14 @@
   import Sankey from "./lib/Sankey.svelte";
   import Transactions from "./lib/Transactions.svelte";
 
-  let view = $state("sankey");
+  // ?view=bills opens a tab directly — the Gmail connect flow comes back
+  // that way. The query string is then dropped so a reload starts clean.
+  const params = new URLSearchParams(location.search);
+  let view = $state(
+    ["sankey", "transactions", "bills"].includes(params.get("view")) ? params.get("view") : "sankey"
+  );
+  const gmailResult = params.get("gmail");
+  if (location.search) history.replaceState(null, "", location.pathname);
   let months = $state([]);
   let month = $state(new Date().toISOString().slice(0, 7));
   let items = $state([]);
@@ -99,7 +106,7 @@
   {:else if view === "transactions"}
     <Transactions {month} {reloadKey} />
   {:else}
-    <Bills {reloadKey} />
+    <Bills {reloadKey} {gmailResult} />
   {/if}
 </main>
 

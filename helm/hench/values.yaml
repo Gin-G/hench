@@ -115,6 +115,13 @@ longmont:
   secretPath: hench/longmont
   usernameKey: username
   passwordKey: password
+# Google OAuth client for read-only Gmail, used to read bill reminder emails.
+# Register https://<frontend.fqdn>/api/oauth/google/callback on the client.
+google:
+  enabled: true
+  secretPath: hench/google
+  clientIdKey: client_id
+  clientSecretKey: client_secret
 cnpg:
   enabled: true
   instances: 1

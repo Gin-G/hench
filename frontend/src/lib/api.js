@@ -68,6 +68,10 @@ export const api = {
   upcoming: (days = 30) => req(`/upcoming?days=${days}`),
   debts: () => req("/debts"),
   plan: () => req("/plan"),
+  googleStatus: () => req("/oauth/google/status"),
+  disconnectGoogle: () => req("/oauth/google", { method: "DELETE" }),
+  // A full-page navigation, not a fetch: it redirects out to Google.
+  googleConnectUrl: `${BASE}/oauth/google/start`,
   renameAccount: (accountId, nickname) =>
     req(`/accounts/${encodeURIComponent(accountId)}`, {
       method: "PATCH",

@@ -4,6 +4,7 @@ Usage:
     python -m app.cli sync            # sync all items
     python -m app.cli sync --item ID  # sync a single item
     python -m app.cli longmont        # refresh the Longmont utility bill now
+    python -m app.cli xcel            # re-read the Xcel bill email now
 """
 from __future__ import annotations
 
@@ -15,6 +16,7 @@ from .db import SessionLocal
 from .models import Item
 from .services.longmont import sync_longmont
 from .services.sync import sync_all, sync_item
+from .services.xcel import sync_xcel
 
 log = logging.getLogger("hench.cli")
 
@@ -48,6 +50,12 @@ async def _run_longmont() -> None:
         await session.commit()
 
 
+async def _run_xcel() -> None:
+    async with SessionLocal() as session:
+        log.info("xcel: %s", await sync_xcel(session, force=True))
+        await session.commit()
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser(prog="hench")
@@ -55,12 +63,15 @@ def main() -> None:
     sync_cmd = sub.add_parser("sync", help="run a transactions sync")
     sync_cmd.add_argument("--item", dest="item_id", default=None)
     sub.add_parser("longmont", help="refresh the Longmont utility bill")
+    sub.add_parser("xcel", help="re-read the Xcel bill email")
     args = parser.parse_args()
 
     if args.command == "sync":
         asyncio.run(_run_sync(args.item_id))
     elif args.command == "longmont":
         asyncio.run(_run_longmont())
+    elif args.command == "xcel":
+        asyncio.run(_run_xcel())
 
 
 if __name__ == "__main__":

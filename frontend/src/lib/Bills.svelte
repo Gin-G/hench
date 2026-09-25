@@ -2,7 +2,13 @@
   import { api, fmtMoney } from "./api.js";
   import BillForm from "./BillForm.svelte";
 
-  let { reloadKey = 0 } = $props();
+  let { reloadKey = 0, gmailResult = null } = $props();
+
+  const GMAIL_MESSAGES = {
+    connected: "Gmail connected. Bill emails are read on the next sync.",
+    declined: "Gmail was not connected: access was declined.",
+    failed: "Gmail could not be connected. Check that read-only Gmail access was allowed, then try again.",
+  };
 
   const HORIZONS = [14, 30, 60, 90];
 
@@ -10,6 +16,8 @@
   let upcoming = $state(null);
   let debts = $state(null);
   let plan = $state(null);
+  let gmail = $state(null);
+  let confirmDisconnect = $state(false);
   let bills = $state([]);
   let error = $state(null);
   // null = closed, "new" = adding, or the bill being edited.
@@ -26,12 +34,13 @@
   async function load() {
     error = null;
     try {
-      [upcoming, debts, bills, hidden, plan] = await Promise.all([
+      [upcoming, debts, bills, hidden, plan, gmail] = await Promise.all([
         api.upcoming(days),
         api.debts(),
         api.bills(),
         api.hiddenStreams(),
         api.plan(),
+        api.googleStatus(),
       ]);
     } catch (e) {
       error = String(e);
@@ -53,6 +62,15 @@
     else await api.updateBill(editing.id, body);
     editing = null;
     await load();
+  }
+
+  function disconnectGmail() {
+    if (!confirmDisconnect) {
+      confirmDisconnect = true;
+      return;
+    }
+    confirmDisconnect = false;
+    act(() => api.disconnectGoogle());
   }
 
   function remove(bill) {
@@ -364,6 +382,26 @@
     Linked cards show up above on their own.
   </p>
 
+  {#if gmailResult && GMAIL_MESSAGES[gmailResult]}
+    <p class="notice" class:bad={gmailResult !== "connected"}>{GMAIL_MESSAGES[gmailResult]}</p>
+  {/if}
+  {#if gmail?.configured}
+    <div class="gmail">
+      {#if gmail.connected}
+        <span>
+          <span class="tag synced">Gmail</span>
+          Reading bill emails from <strong>{gmail.account_email}</strong> (read-only)
+        </span>
+        <button class="small" class:danger={confirmDisconnect} onclick={disconnectGmail}>
+          {confirmDisconnect ? "Confirm disconnect" : "Disconnect"}
+        </button>
+      {:else}
+        <span>Connect Gmail (read-only) to read bill emails, such as Xcel's reminders.</span>
+        <a class="button" href={api.googleConnectUrl}>Connect Gmail</a>
+      {/if}
+    </div>
+  {/if}
+
   {#if editing === "new"}
     <BillForm onSave={save} onCancel={() => (editing = null)} />
   {/if}
@@ -397,9 +435,15 @@
                   <div class="note">Updated {new Date(b.source_synced_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</div>
                 {/if}
               </td>
-              <td class="num">{b.amount != null ? fmtMoney(b.amount) : "varies"}</td>
+              <td class="num">{b.amount != null ? fmtMoney(b.amount) : b.source && !b.active ? "—" : "varies"}</td>
               <td>{b.frequency}</td>
-              <td>{fmtDate(b.next_due_date)}{#if b.due_date_estimated}<span class="basis"> est.</span>{/if}</td>
+              <td>
+                {#if b.source && !b.active}
+                  <span class="muted">waiting for first read</span>
+                {:else}
+                  {fmtDate(b.next_due_date)}{#if b.due_date_estimated}<span class="basis"> est.</span>{/if}
+                {/if}
+              </td>
               <td class="num">{b.balance != null ? fmtMoney(b.balance) : ""}</td>
               <td class="rowact">
                 <!-- A synced bill is rewritten on every sync, so editing it would not stick. -->
@@ -785,6 +829,38 @@
   .note {
     color: var(--muted);
     font-size: 0.78rem;
+  }
+  .note.err {
+    color: var(--danger);
+  }
+  .notice {
+    font-size: 0.85rem;
+    color: var(--accent);
+  }
+  .notice.bad {
+    color: var(--danger);
+  }
+  .gmail {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+    padding: 0.6rem 0.8rem;
+    margin-bottom: 0.8rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 0.88rem;
+  }
+  a.button {
+    display: inline-block;
+    padding: 0.35rem 0.8rem;
+    border: 1px solid var(--accent);
+    border-radius: 7px;
+    background: var(--accent-dim);
+    color: var(--accent);
+    text-decoration: none;
+    font-size: 0.85rem;
   }
   .rowact {
     text-align: right;

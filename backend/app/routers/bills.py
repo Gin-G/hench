@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_session
@@ -49,7 +49,9 @@ async def list_bills(
     """
     stmt = select(Bill)
     if not include_inactive:
-        stmt = stmt.where(Bill.active.is_(True))
+        # A synced bill stays inactive until its first successful read; list
+        # it anyway so the reason it has not appeared (its error) is visible.
+        stmt = stmt.where(or_(Bill.active.is_(True), Bill.source.is_not(None)))
     today = date.today()
     out = [
         BillOut.model_validate(bill).model_copy(

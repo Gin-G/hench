@@ -63,6 +63,16 @@ class Settings(BaseSettings):
     longmont_username: str = Field(default="", alias="LONGMONT_USERNAME")
     longmont_password: str = Field(default="", alias="LONGMONT_PASSWORD")
 
+    # --- Google (Gmail, read-only) -----------------------------------------
+    # OAuth client from OpenBao hench/google. The redirect URI must match one
+    # registered on that client exactly. Empty client id = Gmail sources off.
+    google_client_id: str = Field(default="", alias="GOOGLE_CLIENT_ID")
+    google_client_secret: str = Field(default="", alias="GOOGLE_CLIENT_SECRET")
+    google_redirect_uri: str = Field(
+        default="http://localhost:5173/api/oauth/google/callback",
+        alias="GOOGLE_REDIRECT_URI",
+    )
+
     # --- Server -------------------------------------------------------------
     host: str = Field(default="0.0.0.0", alias="HOST")
     port: int = Field(default=8000, alias="PORT")

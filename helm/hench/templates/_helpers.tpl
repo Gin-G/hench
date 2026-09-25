@@ -24,6 +24,10 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{ .Values.app.name }}-longmont
 {{- end -}}
 
+{{- define "hench.googleSecret" -}}
+{{ .Values.app.name }}-google
+{{- end -}}
+
 {{- define "hench.basicAuthSecret" -}}
 {{ .Values.app.name }}-basicauth
 {{- end -}}
@@ -89,6 +93,24 @@ Plaid + Fernet secrets come from the ESO-managed config secret.
       name: {{ include "hench.longmontSecret" . }}
       key: LONGMONT_PASSWORD
       optional: true
+{{- end }}
+{{- if .Values.google.enabled }}
+# Optional for the same reason: without them Gmail sources report themselves
+# unconfigured and the rest of the app is unaffected.
+- name: GOOGLE_CLIENT_ID
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "hench.googleSecret" . }}
+      key: GOOGLE_CLIENT_ID
+      optional: true
+- name: GOOGLE_CLIENT_SECRET
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "hench.googleSecret" . }}
+      key: GOOGLE_CLIENT_SECRET
+      optional: true
+- name: GOOGLE_REDIRECT_URI
+  value: {{ printf "https://%s/api/oauth/google/callback" .Values.frontend.fqdn | quote }}
 {{- end }}
 - name: LOG_LEVEL
   value: {{ .Values.backend.env.LOG_LEVEL | quote }}

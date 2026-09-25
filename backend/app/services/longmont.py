@@ -31,12 +31,19 @@ from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import get_settings
-from ..models import Bill, RecurringStream, Transaction
+from ..models import Bill
 from .schedule import add_months
+from .sources import (
+    hide_detected_streams,
+    paid_per_bank,
+    parse_date,
+    parse_money,
+    visible_lines,
+)
 
 log = logging.getLogger("hench.longmont")
 
@@ -78,38 +85,6 @@ class Snapshot:
 
 
 # --- Parsing ----------------------------------------------------------------
-_MONEY = re.compile(r"(-?)\$\s*(-?[\d,]+\.\d{2})")
-
-
-def _money(text: str) -> Decimal | None:
-    m = _MONEY.search(text)
-    if not m:
-        return None
-    value = Decimal(m.group(2).replace(",", ""))
-    return -abs(value) if m.group(1) or value < 0 else value
-
-
-def _parse_date(text: str) -> date | None:
-    text = text.strip()
-    for pattern, fmt in (
-        (r"\d{4}-\d{2}-\d{2}", "%Y-%m-%d"),
-        (r"\d{1,2}/\d{1,2}/\d{4}", "%m/%d/%Y"),
-        (r"[A-Z][a-z]{2,8}\.? \d{1,2}, \d{4}", None),
-    ):
-        m = re.search(pattern, text)
-        if not m:
-            continue
-        found = m.group(0).replace(".", "")
-        if fmt:
-            return datetime.strptime(found, fmt).date()
-        for f in ("%B %d, %Y", "%b %d, %Y"):
-            try:
-                return datetime.strptime(found, f).date()
-            except ValueError:
-                pass
-    return None
-
-
 def _element_text(html: str, element_id: str) -> str | None:
     """Text of the first element with this id, up to its closing tag."""
     m = re.search(
@@ -155,19 +130,9 @@ class _TableRows(HTMLParser):
             self._cell.append(data.strip())
 
 
-def visible_lines(html: str) -> list[str]:
-    html = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", html)
-    lines = []
-    for line in re.sub(r"<[^>]+>", "\n", html).split("\n"):
-        line = re.sub(r"\s+", " ", unescape(line)).strip()
-        if line:
-            lines.append(line)
-    return lines
-
-
 def parse_dashboard(html: str) -> Snapshot:
     balance_text = _element_text(html, "showTotalBalanceFromAccExt")
-    if balance_text is None or _money(balance_text) is None:
+    if balance_text is None or parse_money(balance_text) is None:
         raise ValueError("total balance not found on the dashboard")
     past_due_text = _element_text(
         html, "myAccounts_showPastDueAmountDueDateOnDashboardWidget"
@@ -179,14 +144,14 @@ def parse_dashboard(html: str) -> Snapshot:
     for cells in table.rows:
         if len(cells) < 3:
             continue
-        on, amount = _parse_date(cells[0]), _money(cells[2])
+        on, amount = parse_date(cells[0]), parse_money(cells[2])
         if on and amount is not None:
             activity.append(Activity(on, cells[1], amount))
     activity.sort(key=lambda a: a.on, reverse=True)
 
     return Snapshot(
-        balance=_money(balance_text),
-        past_due=(_money(past_due_text or "") or Decimal("0")),
+        balance=parse_money(balance_text),
+        past_due=(parse_money(past_due_text or "") or Decimal("0")),
         activity=activity,
     )
 
@@ -201,7 +166,7 @@ def parse_due_date(widget_html: str) -> tuple[date | None, list[str]]:
     for i, line in enumerate(lines):
         if "due" in line.lower() and "past due" not in line.lower():
             for candidate in lines[i : i + 3]:
-                found = _parse_date(candidate)
+                found = parse_date(candidate)
                 if found:
                     return found, lines
     return None, lines
@@ -265,34 +230,14 @@ def _pay_gap_days(activity: list[Activity]) -> int:
     return int(statistics.median(gaps)) if gaps else _DEFAULT_PAY_GAP_DAYS
 
 
-async def _paid_per_bank(session: AsyncSession, since: date, amount: Decimal) -> date | None:
-    """Date of a bank or card payment to Longmont matching the open bill.
-
-    The portal can take days to post a payment; Plaid often sees it first.
-    """
-    rows = (
-        await session.execute(
-            select(Transaction.date, Transaction.amount).where(
-                or_(
-                    Transaction.name.ilike(_PAYMENT_PATTERN),
-                    Transaction.merchant_name.ilike(_PAYMENT_PATTERN),
-                ),
-                Transaction.date >= since,
-            )
-        )
-    ).all()
-    for on, paid in rows:
-        if abs(Decimal(paid) - amount) <= Decimal("1.00"):
-            return on
-    return None
-
-
 async def apply_snapshot(session: AsyncSession, bill: Bill, snap: Snapshot, today: date) -> None:
     last_bill = next((a for a in snap.activity if a.is_bill), None)
     gap = _pay_gap_days(snap.activity)
     paid_on = None
     if snap.balance > 0 and last_bill:
-        paid_on = await _paid_per_bank(session, last_bill.on, snap.balance)
+        paid_on = await paid_per_bank(
+            session, _PAYMENT_PATTERN, last_bill.on, snap.balance
+        )
 
     if snap.balance > 0 and not paid_on:
         # An open bill: what is owed, by the stated date or an estimate.
@@ -338,22 +283,6 @@ async def apply_snapshot(session: AsyncSession, bill: Bill, snap: Snapshot, toda
     }
 
 
-async def _hide_detected_stream(session: AsyncSession) -> None:
-    """Hide Plaid's own guess at this bill so it is not counted twice."""
-    streams = (
-        await session.scalars(
-            select(RecurringStream).where(
-                or_(
-                    RecurringStream.merchant_name.ilike(_PAYMENT_PATTERN),
-                    RecurringStream.description.ilike(_PAYMENT_PATTERN),
-                )
-            )
-        )
-    ).all()
-    for stream in streams:
-        stream.hidden = True
-
-
 async def sync_longmont(session: AsyncSession, force: bool = False) -> str:
     """Refresh the Longmont bill. Returns a one-line status for logs."""
     settings = get_settings()
@@ -380,7 +309,7 @@ async def sync_longmont(session: AsyncSession, force: bool = False) -> str:
             active=False,
         )
         session.add(bill)
-        await _hide_detected_stream(session)
+        await hide_detected_streams(session, _PAYMENT_PATTERN)
 
     bill.source_attempted_at = now
     try:

@@ -381,6 +381,32 @@ class Bill(Base):
     )
 
 
+class OAuthToken(Base):
+    """A long-lived grant from a third party, e.g. read-only Gmail.
+
+    One row per provider in a single-user app. The refresh token is
+    Fernet-encrypted like Plaid access tokens, and so is orphaned by the same
+    fernet_key rotation — reconnecting from the UI replaces it.
+    """
+
+    __tablename__ = "oauth_tokens"
+
+    provider: Mapped[str] = mapped_column(String, primary_key=True)
+    # Whose account the grant is for, shown in the UI.
+    account_email: Mapped[str | None] = mapped_column(String, nullable=True)
+    scope: Mapped[str] = mapped_column(String, nullable=False)
+    refresh_token: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
 class Rule(Base):
     """Merchant-pattern -> category mapping, applied during sync.
 
