@@ -15,14 +15,21 @@
   let editing = $state(null);
   // Bill id awaiting a second click to delete.
   let confirmDelete = $state(null);
+  // Detected streams the user hid from the timeline.
+  let hidden = $state([]);
+  let showHidden = $state(false);
+  // account_id being renamed, and the draft name.
+  let renaming = $state(null);
+  let renameDraft = $state("");
 
   async function load() {
     error = null;
     try {
-      [upcoming, debts, bills] = await Promise.all([
+      [upcoming, debts, bills, hidden] = await Promise.all([
         api.upcoming(days),
         api.debts(),
         api.bills(),
+        api.hiddenStreams(),
       ]);
     } catch (e) {
       error = String(e);
@@ -53,6 +60,25 @@
     }
     confirmDelete = null;
     act(() => api.deleteBill(bill.id));
+  }
+
+  function startRename(d) {
+    renaming = d.ref_id;
+    // Start from the current label unless it is just the institution's
+    // generic name, which is the thing being replaced.
+    renameDraft = d.name.includes("••") ? "" : d.name;
+  }
+
+  function finishRename(save) {
+    // Enter or Escape closes the input, which then fires blur: already done.
+    if (renaming === null) return;
+    const id = renaming;
+    renaming = null;
+    if (save) act(() => api.renameAccount(id, renameDraft));
+  }
+
+  function focus(node) {
+    node.focus();
   }
 
   // "YYYY-MM-DD" parsed as a local date; new Date(str) would read it as UTC
@@ -87,6 +113,7 @@
 
   const SOURCE_LABEL = { card: "card", recurring: "detected" };
 
+  let dueCount = $derived(upcoming?.payments.filter((p) => !p.paid).length ?? 0);
   let overdue = $derived(upcoming?.payments.filter((p) => p.overdue) ?? []);
   let nextUp = $derived(
     upcoming?.payments.find((p) => !p.overdue && !p.paid) ?? null
@@ -105,7 +132,7 @@
   <div class="tile">
     <span class="label">Due next {days} days</span>
     <span class="value">{upcoming ? fmtMoney(upcoming.total_due) : "—"}</span>
-    <span class="sub">{upcoming?.payments.filter((p) => !p.paid).length ?? 0} payments</span>
+    <span class="sub">{dueCount} {dueCount === 1 ? "payment" : "payments"}</span>
   </div>
   <div class="tile">
     <span class="label">Total debt</span>
@@ -164,6 +191,14 @@
               <button class="small" onclick={() => act(() => api.markBillPaid(p.ref_id))}>
                 Paid
               </button>
+            {:else if p.source === "recurring"}
+              <button
+                class="small ghost"
+                title="Hide this detected payment from the timeline"
+                onclick={() => act(() => api.setStreamHidden(p.ref_id, true))}
+              >
+                Hide
+              </button>
             {/if}
           </div>
         </li>
@@ -181,10 +216,27 @@
         {@const util = utilization(d)}
         <li>
           <div class="row">
-            <span class="name">
-              {d.name}
-              {#if d.is_overdue}<span class="tag danger">overdue</span>{/if}
-            </span>
+            {#if renaming === d.ref_id}
+              <input
+                class="rename"
+                bind:value={renameDraft}
+                placeholder="Nickname, blank to reset"
+                use:focus
+                onkeydown={(e) => {
+                  if (e.key === "Enter") finishRename(true);
+                  if (e.key === "Escape") finishRename(false);
+                }}
+                onblur={() => finishRename(true)}
+              />
+            {:else}
+              <span class="name">
+                {d.name}
+                {#if d.source === "plaid"}
+                  <button class="icon" title="Rename" onclick={() => startRename(d)}>✎</button>
+                {/if}
+                {#if d.is_overdue}<span class="tag danger">overdue</span>{/if}
+              </span>
+            {/if}
             <span class="bal">{fmtMoney(d.balance)}</span>
           </div>
           <div class="meta">
@@ -262,6 +314,30 @@
     <p class="empty">No bills added yet.</p>
   {/if}
 </section>
+
+{#if hidden.length}
+  <section class="panel hidden-panel">
+    <button class="link" onclick={() => (showHidden = !showHidden)}>
+      {showHidden ? "▾" : "▸"} Hidden detected payments ({hidden.length})
+    </button>
+    {#if showHidden}
+      <ul class="hidden-list">
+        {#each hidden as h (h.stream_id)}
+          <li>
+            <span>{h.merchant_name || h.description}</span>
+            <span class="muted">
+              {h.average_amount != null ? fmtMoney(h.average_amount) : ""}
+              {h.frequency ? h.frequency.toLowerCase().replace("_", "-") : ""}
+            </span>
+            <button class="small" onclick={() => act(() => api.setStreamHidden(h.stream_id, false))}>
+              Unhide
+            </button>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  </section>
+{/if}
 
 <style>
   .tiles {
@@ -441,6 +517,58 @@
   button.danger {
     color: var(--danger);
     border-color: var(--danger);
+  }
+  button.ghost {
+    background: transparent;
+    color: var(--muted);
+  }
+  button.ghost:hover {
+    color: var(--text);
+  }
+  button.icon {
+    background: none;
+    border: none;
+    padding: 0 0.25rem;
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+  button.icon:hover {
+    color: var(--accent);
+  }
+  input.rename {
+    flex: 1;
+    min-width: 0;
+    padding: 0.2rem 0.45rem;
+  }
+  .hidden-panel {
+    margin-top: 1rem;
+  }
+  button.link {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+  button.link:hover {
+    color: var(--text);
+  }
+  .hidden-list li {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    padding: 0.45rem 0;
+    border-bottom: 1px solid var(--panel-2);
+  }
+  .hidden-list li span:first-child {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: break-word;
+  }
+  .muted {
+    color: var(--muted);
+    font-size: 0.82rem;
+    white-space: nowrap;
   }
   .debts li {
     padding: 0.55rem 0;

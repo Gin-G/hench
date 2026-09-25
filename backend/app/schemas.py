@@ -71,6 +71,7 @@ class AccountOut(BaseModel):
     account_id: str
     item_id: str
     name: str | None = None
+    nickname: str | None = None
     official_name: str | None = None
     mask: str | None = None
     type: str | None = None
@@ -99,9 +100,19 @@ class RecurringStreamOut(BaseModel):
     last_date: date | None = None
     predicted_next_date: date | None = None
     is_active: bool
+    hidden: bool
     status: str | None = None
     category_primary: str | None = None
     category_detailed: str | None = None
+
+
+class AccountUpdate(BaseModel):
+    # Blank or null clears the nickname back to the institution's name.
+    nickname: str | None = None
+
+
+class RecurringStreamUpdate(BaseModel):
+    hidden: bool
 
 
 # --- Bills and debts -------------------------------------------------------

@@ -80,6 +80,7 @@ liabilities populate immediately on link.
 - [x] Add a Liability model and populate it from /liabilities/get, tolerating institutions that do not support the product
 - [x] Add a RecurringStream model and populate it from /transactions/recurring/get, tolerating PRODUCT_NOT_READY until history accrues
 - [x] Add hand-entered bills for what Plaid cannot see (rent, utilities, loans at unlinked lenders), with a Bills & debt view merging them with card liabilities and detected recurring outflows — `Bill`, `/bills`, `/upcoming`, `/debts`
+- [x] Let accounts be renamed and detected recurring payments be hidden, since Chase names every card "CREDIT CARD" and Plaid detects card interest as a recurring bill — `nickname` and `hidden`, neither written by sync
 - [ ] Add a /forecast endpoint projecting dated cash events and a running balance to a horizon
 - [ ] Add an extra-payment what-if over the forecast, returning payoff date, interest saved and cash left over
 - [ ] Add an allocation view for splitting income across bills, debt and savings

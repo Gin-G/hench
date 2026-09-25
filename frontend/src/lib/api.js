@@ -67,6 +67,20 @@ export const api = {
   markBillPaid: (id) => req(`/bills/${id}/paid`, { method: "POST" }),
   upcoming: (days = 30) => req(`/upcoming?days=${days}`),
   debts: () => req("/debts"),
+  renameAccount: (accountId, nickname) =>
+    req(`/accounts/${encodeURIComponent(accountId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ nickname }),
+    }),
+  hiddenStreams: () =>
+    req("/recurring?direction=outflow&include_hidden=true").then((streams) =>
+      streams.filter((s) => s.hidden)
+    ),
+  setStreamHidden: (streamId, hidden) =>
+    req(`/recurring/${encodeURIComponent(streamId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ hidden }),
+    }),
 };
 
 // Human-friendly label for Plaid's SCREAMING_SNAKE_CASE categories.

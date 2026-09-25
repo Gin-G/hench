@@ -34,6 +34,10 @@ ZERO = Decimal("0")
 
 
 def _account_label(account: Account) -> str:
+    # A nickname is the user's own name for it, so it goes as-is, without the
+    # mask that is only there to tell identically named accounts apart.
+    if account.nickname:
+        return account.nickname
     name = account.name or account.official_name or "Account"
     return f"{name} ••{account.mask}" if account.mask else name
 
@@ -171,6 +175,7 @@ async def build_upcoming(
                 select(RecurringStream).where(
                     RecurringStream.direction == "outflow",
                     RecurringStream.is_active.is_(True),
+                    RecurringStream.hidden.is_(False),
                 )
             )
         ).all()

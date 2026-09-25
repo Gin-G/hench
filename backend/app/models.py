@@ -75,6 +75,10 @@ class Account(Base):
     mask: Mapped[str | None] = mapped_column(String, nullable=True)
     type: Mapped[str | None] = mapped_column(String, nullable=True)
     subtype: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Set from the UI. Institutions often name every card identically (Chase
+    # sends "CREDIT CARD" for all of them), so this wins over name when shown.
+    # Sync never writes it.
+    nickname: Mapped[str | None] = mapped_column(String, nullable=True)
 
     # --- Balances, refreshed from /accounts/balance/get on each sync --------
     # Plaid's sign convention differs by account type: for depository accounts
@@ -290,6 +294,11 @@ class RecurringStream(Base):
 
     category_primary: Mapped[str | None] = mapped_column(String, nullable=True)
     category_detailed: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # Set from the UI to drop a stream from the upcoming timeline — interest
+    # charges, one-off purchases Plaid mistook for a pattern, and the like.
+    # Sync never writes it, so a hidden stream stays hidden.
+    hidden: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
