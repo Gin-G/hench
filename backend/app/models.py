@@ -344,6 +344,29 @@ class Bill(Base):
     apr: Mapped[Decimal | None] = mapped_column(Rate, nullable=True)
 
     last_paid_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # True when next_due_date is a guess — the source did not state one, so it
+    # was projected from when past bills were paid. Shown as "est." in the UI.
+    due_date_estimated: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+
+    # --- Kept up to date by sync rather than by hand -----------------------
+    # Null for a bill entered by hand. Otherwise the fetcher that owns it
+    # ("longmont"), which overwrites amount and due date on each run.
+    source: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
+    source_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Every attempt, successful or not — what the fetch rate limit keys on.
+    source_attempted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Why the last attempt failed; cleared on success. The bill keeps its last
+    # good figures meanwhile.
+    source_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # What the fetcher read, for display and for debugging a parse.
+    source_detail: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
     # Cleared when a one-off bill is paid, or by hand to stop a bill without
     # losing its history.
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

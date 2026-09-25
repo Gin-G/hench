@@ -11,6 +11,7 @@ has to know where a payment came from to sort or total it.
 """
 from __future__ import annotations
 
+import re
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -28,7 +29,16 @@ _DEBT_TYPES = {"credit", "loan"}
 ZERO = Decimal("0")
 
 
-def _account_label(account: Account) -> str:
+# ACH descriptions carry the originator's id after the name, e.g.
+# "WF Credit Card AUTO PAY PPD ID: 50260000".
+_ACH_SUFFIX = re.compile(r"\s+(?:PPD|CCD|WEB|TEL)\s+ID:.*$", re.I)
+
+
+def clean_name(name: str) -> str:
+    return _ACH_SUFFIX.sub("", name).strip() or name
+
+
+def account_label(account: Account) -> str:
     # A nickname is the user's own name for it, so it goes as-is, without the
     # mask that is only there to tell identically named accounts apart.
     if account.nickname:
@@ -68,6 +78,11 @@ def _bill_payments(bills: list[Bill], today: date, end: date) -> list[UpcomingPa
                     amount=bill.amount,
                     autopay=bill.autopay,
                     overdue=due < today,
+                    # Only the next occurrence of a synced bill is the biller's
+                    # own figure; later ones are projections either way.
+                    estimated=bill.due_date_estimated
+                    or (bill.source is not None and due != bill.next_due_date),
+                    synced_from=bill.source,
                 )
             )
     return payments
@@ -98,7 +113,7 @@ def _card_payments(
             UpcomingPayment(
                 source="card",
                 ref_id=account.account_id,
-                name=_account_label(account),
+                name=account_label(account),
                 due_date=due,
                 amount=liability.minimum_payment_amount,
                 amount_basis="minimum",
@@ -112,7 +127,10 @@ def _card_payments(
 
 
 def _stream_payments(
-    streams: list[RecurringStream], labels: dict[str, str], today: date, end: date
+    streams: list[RecurringStream],
+    accounts: dict[str, Account],
+    today: date,
+    end: date,
 ) -> list[UpcomingPayment]:
     payments = []
     for stream in streams:
@@ -131,11 +149,22 @@ def _stream_payments(
                 UpcomingPayment(
                     source="recurring",
                     ref_id=stream.stream_id,
-                    name=stream.merchant_name or stream.description or "Recurring",
+                    name=clean_name(stream.merchant_name or stream.description or "Recurring"),
                     due_date=due,
                     amount=stream.average_amount,
                     amount_basis="average",
-                    account=labels.get(stream.account_id),
+                    account=(
+                        account_label(accounts[stream.account_id])
+                        if stream.account_id in accounts
+                        else None
+                    ),
+                    estimated=True,
+                    pay_from=(
+                        "card"
+                        if stream.account_id in accounts
+                        and accounts[stream.account_id].type == "credit"
+                        else "cash"
+                    ),
                 )
             )
     return payments
@@ -178,17 +207,23 @@ async def build_upcoming(
             )
         ).all()
     )
-    labels = {a.account_id: _account_label(a) for a in accounts}
+    by_id = {a.account_id: a for a in accounts}
 
     payments = (
         _bill_payments(bills, today, end)
         + _card_payments(accounts, today, end)
-        + _stream_payments(streams, labels, today, end)
+        + _stream_payments(streams, by_id, today, end)
     )
     payments.sort(key=lambda p: (p.due_date, p.name.lower()))
 
+    # Card-charged payments are already inside that card's own payment.
     total_due = sum(
-        (p.amount for p in payments if p.amount is not None and not p.paid), ZERO
+        (
+            p.amount
+            for p in payments
+            if p.amount is not None and not p.paid and p.pay_from == "cash"
+        ),
+        ZERO,
     )
     return UpcomingResponse(start=today, end=end, payments=payments, total_due=total_due)
 
@@ -213,7 +248,7 @@ async def build_debts(session: AsyncSession, today: date) -> DebtsResponse:
             DebtOut(
                 source="plaid",
                 ref_id=account.account_id,
-                name=_account_label(account),
+                name=account_label(account),
                 institution=institution,
                 kind=liability.liability_type if liability else account.type,
                 balance=account.current_balance,

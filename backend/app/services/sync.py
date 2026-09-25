@@ -23,6 +23,7 @@ from ..plaid_client import get_plaid_client
 from ..schemas import SyncResult
 from . import enrich
 from . import rules as rules_svc
+from .longmont import sync_longmont
 
 log = logging.getLogger("hench.sync")
 
@@ -197,4 +198,13 @@ async def sync_all(session: AsyncSession) -> list[SyncResult]:
             # subsequent Item fails on a PendingRollbackError rather than on
             # anything to do with that Item.
             await session.rollback()
+
+    # Bills read from outside portals. Isolated like the Items above: a
+    # portal being down must not undo the Plaid sync that already committed.
+    try:
+        log.info("longmont: %s", await sync_longmont(session))
+        await session.commit()
+    except Exception:  # noqa: BLE001
+        log.exception("longmont sync failed")
+        await session.rollback()
     return results

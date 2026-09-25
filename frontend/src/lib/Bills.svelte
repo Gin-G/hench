@@ -9,6 +9,7 @@
   let days = $state(30);
   let upcoming = $state(null);
   let debts = $state(null);
+  let plan = $state(null);
   let bills = $state([]);
   let error = $state(null);
   // null = closed, "new" = adding, or the bill being edited.
@@ -25,11 +26,12 @@
   async function load() {
     error = null;
     try {
-      [upcoming, debts, bills, hidden] = await Promise.all([
+      [upcoming, debts, bills, hidden, plan] = await Promise.all([
         api.upcoming(days),
         api.debts(),
         api.bills(),
         api.hiddenStreams(),
+        api.plan(),
       ]);
     } catch (e) {
       error = String(e);
@@ -113,7 +115,26 @@
 
   const SOURCE_LABEL = { card: "card", recurring: "detected" };
 
-  let dueCount = $derived(upcoming?.payments.filter((p) => !p.paid).length ?? 0);
+  // Payments in due-date order, with each payday in the window slotted in
+  // ahead of the payments due that day or later.
+  let rows = $derived.by(() => {
+    if (!upcoming) return [];
+    const pays = (plan?.paychecks ?? []).filter((c) => c.date <= upcoming.end);
+    const out = [];
+    let i = 0;
+    for (const p of upcoming.payments) {
+      while (i < pays.length && pays[i].date < p.due_date) {
+        out.push({ key: `pay-${pays[i].name}-${pays[i].date}`, payday: pays[i++] });
+      }
+      out.push({ key: `${p.source}-${p.ref_id}-${p.due_date}`, payment: p });
+    }
+    while (i < pays.length) out.push({ key: `pay-${pays[i].name}-${pays[i].date}`, payday: pays[i++] });
+    return out;
+  });
+
+  let dueCount = $derived(
+    upcoming?.payments.filter((p) => !p.paid && p.pay_from === "cash").length ?? 0
+  );
   let overdue = $derived(upcoming?.payments.filter((p) => p.overdue) ?? []);
   let nextUp = $derived(
     upcoming?.payments.find((p) => !p.overdue && !p.paid) ?? null
@@ -127,6 +148,56 @@
 </script>
 
 {#if error}<p class="err">{error}</p>{/if}
+
+{#if plan}
+  <section class="panel plan">
+    <h2>
+      Until {plan.next_paycheck ? "next paycheck" : "two weeks out"}
+      <span class="rel">
+        · {fmtDate(plan.until)}{#if plan.next_paycheck}, {plan.next_paycheck.name} ~{fmtMoney(plan.next_paycheck.amount)}{/if}
+      </span>
+    </h2>
+    <div class="equation">
+      <div class="term">
+        <span class="label">In checking</span>
+        <span class="value">{fmtMoney(plan.cash_total)}</span>
+        <span class="sub">{plan.cash_accounts.map((c) => c.name).join(" + ")}</span>
+      </div>
+      <span class="op">−</span>
+      <div class="term">
+        <span class="label">Due by {fmtDate(plan.until)}</span>
+        <span class="value">{fmtMoney(plan.due_total)}</span>
+        <span class="sub">
+          {plan.due_count} {plan.due_count === 1 ? "payment" : "payments"}{#if plan.unknown_amounts}, {plan.unknown_amounts} amount unknown{/if}
+        </span>
+      </div>
+      <span class="op">=</span>
+      <div class="term">
+        <span class="label">{Number(plan.left_over) < 0 ? "Short by" : "Left over"}</span>
+        <span class="value" class:neg={Number(plan.left_over) < 0}>{fmtMoney(Math.abs(Number(plan.left_over)))}</span>
+        <span class="sub">until the paycheck lands</span>
+      </div>
+    </div>
+    <div class="safe" class:short={Number(plan.low_point) < 0}>
+      {#if Number(plan.low_point) < 0}
+        <span class="label">Heads up</span>
+        <span class="value">Short {fmtMoney(-Number(plan.low_point))} on {fmtDate(plan.low_point_date)}</span>
+        <span class="sub">
+          Counting every bill and paycheck through {fmtDate(plan.horizon)}, checking dips below zero. Nothing spare to send to debt yet.
+        </span>
+      {:else}
+        <span class="label">Safe to send to debt now</span>
+        <span class="value">{fmtMoney(plan.safe_extra)}</span>
+        <span class="sub">
+          The lowest checking gets through {fmtDate(plan.horizon)}, on {fmtDate(plan.low_point_date)}, counting every bill and paycheck.
+          {#if plan.target_debt}
+            Best spent on <strong>{plan.target_debt.name}</strong>, {Number(plan.target_debt.apr).toFixed(2)}% APR on {fmtMoney(plan.target_debt.balance)}.
+          {/if}
+        </span>
+      {/if}
+    </div>
+  </section>
+{/if}
 
 <section class="tiles">
   <div class="tile">
@@ -165,45 +236,70 @@
     {#if upcoming && !upcoming.payments.length}
       <p class="empty">Nothing due in the next {days} days.</p>
     {/if}
-    <ul class="timeline">
-      {#each upcoming?.payments ?? [] as p (p.source + p.ref_id + p.due_date)}
-        <li class:overdue={p.overdue} class:paid={p.paid}>
-          <div class="when">
-            <span>{fmtDate(p.due_date)}</span>
-            <span class="rel">{p.paid ? "paid" : relative(p.due_date)}</span>
-          </div>
-          <div class="what">
-            <span class="name">{p.name}</span>
-            <span class="tags">
-              {#if SOURCE_LABEL[p.source]}<span class="tag">{SOURCE_LABEL[p.source]}</span>{/if}
-              {#if p.autopay}<span class="tag">autopay</span>{/if}
-              {#if p.statement_balance != null && Number(p.statement_balance) > 0}
-                <span class="hint">statement {fmtMoney(p.statement_balance)}</span>
-              {/if}
-            </span>
-          </div>
-          <div class="amt">
-            {p.amount != null ? fmtMoney(p.amount) : "varies"}
-            {#if p.amount_basis}<span class="basis">{p.amount_basis === "minimum" ? "min" : "avg"}</span>{/if}
-          </div>
-          <div class="act">
-            {#if p.source === "bill" && !p.autopay}
-              <button class="small" onclick={() => act(() => api.markBillPaid(p.ref_id))}>
-                Paid
-              </button>
-            {:else if p.source === "recurring"}
-              <button
-                class="small ghost"
-                title="Hide this detected payment from the timeline"
-                onclick={() => act(() => api.setStreamHidden(p.ref_id, true))}
-              >
-                Hide
-              </button>
+    <div class="scroll">
+      <table class="upcoming">
+        <thead>
+          <tr>
+            <th>Merchant</th>
+            <th class="num">Amount due</th>
+            <th>Due date</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each rows as r (r.key)}
+            {#if r.payday}
+              <tr class="payday">
+                <td colspan="4">
+                  <span>💵 {r.payday.name} · ~{fmtMoney(r.payday.amount)}</span>
+                  <span class="rel">{fmtDate(r.payday.date)}</span>
+                </td>
+              </tr>
+            {:else}
+              {@const p = r.payment}
+              <tr class:overdue={p.overdue} class:paid={p.paid}>
+                <td class="merchant">
+                  <span class="name">{p.name}</span>
+                  <span class="tags">
+                    {#if p.synced_from}<span class="tag synced" title="Read from the biller's site">portal</span>{/if}
+                    {#if p.source === "card"}<span class="tag">card</span>{/if}
+                    {#if p.source === "recurring"}<span class="tag" title="Detected by Plaid from past payments">detected</span>{/if}
+                    {#if p.pay_from === "card"}<span class="tag" title="Charged to a credit card, so paid through that card's payment">on card</span>{/if}
+                    {#if p.autopay}<span class="tag">autopay</span>{/if}
+                    {#if p.statement_balance != null && Number(p.statement_balance) > 0}
+                      <span class="hint">statement {fmtMoney(p.statement_balance)}</span>
+                    {/if}
+                  </span>
+                </td>
+                <td class="num amt">
+                  {p.amount != null ? fmtMoney(p.amount) : "varies"}
+                  {#if p.amount_basis}<span class="basis">{p.amount_basis === "minimum" ? "min" : "avg"}</span>{/if}
+                </td>
+                <td class="when">
+                  <span>{fmtDate(p.due_date)}{#if p.estimated}<span class="basis" title="Projected, not stated by the biller"> est.</span>{/if}</span>
+                  <span class="rel">{p.paid ? "paid" : relative(p.due_date)}</span>
+                </td>
+                <td class="act">
+                  {#if p.source === "bill" && !p.autopay && !p.synced_from}
+                    <button class="small" onclick={() => act(() => api.markBillPaid(p.ref_id))}>
+                      Paid
+                    </button>
+                  {:else if p.source === "recurring"}
+                    <button
+                      class="small ghost"
+                      title="Hide this detected payment from the timeline"
+                      onclick={() => act(() => api.setStreamHidden(p.ref_id, true))}
+                    >
+                      Hide
+                    </button>
+                  {/if}
+                </td>
+              </tr>
             {/if}
-          </div>
-        </li>
-      {/each}
-    </ul>
+          {/each}
+        </tbody>
+      </table>
+    </div>
   </section>
 
   <section class="panel">
@@ -293,14 +389,23 @@
               <td>
                 {b.name}
                 {#if b.autopay}<span class="tag">autopay</span>{/if}
+                {#if b.source}<span class="tag synced">portal</span>{/if}
                 {#if b.notes}<div class="note">{b.notes}</div>{/if}
+                {#if b.source_error}
+                  <div class="note err">Last update failed: {b.source_error}</div>
+                {:else if b.source_synced_at}
+                  <div class="note">Updated {new Date(b.source_synced_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</div>
+                {/if}
               </td>
               <td class="num">{b.amount != null ? fmtMoney(b.amount) : "varies"}</td>
               <td>{b.frequency}</td>
-              <td>{fmtDate(b.next_due_date)}</td>
+              <td>{fmtDate(b.next_due_date)}{#if b.due_date_estimated}<span class="basis"> est.</span>{/if}</td>
               <td class="num">{b.balance != null ? fmtMoney(b.balance) : ""}</td>
               <td class="rowact">
-                <button class="small" onclick={() => { confirmDelete = null; editing = b; }}>Edit</button>
+                <!-- A synced bill is rewritten on every sync, so editing it would not stick. -->
+                {#if !b.source}
+                  <button class="small" onclick={() => { confirmDelete = null; editing = b; }}>Edit</button>
+                {/if}
                 <button class="small" class:danger={confirmDelete === b.id} onclick={() => remove(b)}>
                   {confirmDelete === b.id ? "Confirm" : "Delete"}
                 </button>
@@ -340,6 +445,100 @@
 {/if}
 
 <style>
+  .plan {
+    margin-bottom: 1rem;
+  }
+  .plan h2 {
+    margin-bottom: 0.8rem;
+  }
+  .plan h2 .rel {
+    font-weight: 400;
+    font-size: 0.85rem;
+  }
+  .equation {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem 1rem;
+  }
+  .term {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 0;
+  }
+  .value.neg {
+    color: var(--danger);
+  }
+  .safe {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    margin-top: 0.9rem;
+    background: var(--accent-dim);
+    border: 1px solid var(--accent);
+    border-radius: 10px;
+    padding: 0.7rem 0.9rem;
+  }
+  .safe .value {
+    color: var(--accent);
+  }
+  .safe .sub {
+    white-space: normal;
+    color: var(--text);
+  }
+  .safe.short {
+    background: transparent;
+    border-color: var(--danger);
+  }
+  .safe.short .value {
+    color: var(--danger);
+  }
+  .op {
+    font-size: 1.4rem;
+    color: var(--muted);
+  }
+  /* Stacked on a phone, the terms read as a list; the operators just float. */
+  @media (max-width: 560px) {
+    .op {
+      display: none;
+    }
+    .equation {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+  }
+  .scroll {
+    overflow-x: auto;
+  }
+  table.upcoming td {
+    vertical-align: middle;
+  }
+  table.upcoming .when span {
+    white-space: nowrap;
+  }
+  table.upcoming tr.paid {
+    opacity: 0.5;
+  }
+  table.upcoming tr.overdue .when,
+  table.upcoming tr.overdue .rel {
+    color: var(--danger);
+  }
+  tr.payday td {
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    color: var(--accent);
+    font-size: 0.85rem;
+  }
+  tr.payday td span + span {
+    margin-left: 0.6rem;
+  }
+  .merchant .tags {
+    margin-left: 0.4rem;
+  }
+  .tag.synced {
+    color: var(--accent);
+    border-color: var(--accent-dim);
+  }
   .tiles {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -415,24 +614,7 @@
     margin: 0;
     padding: 0;
   }
-  .timeline li {
-    display: grid;
-    grid-template-columns: 6.5rem minmax(0, 1fr) auto 3.8rem;
-    grid-template-areas: "when what amt act";
-    align-items: center;
-    gap: 0.6rem;
-    padding: 0.5rem 0;
-    border-bottom: 1px solid var(--panel-2);
-  }
-  .timeline li.paid {
-    opacity: 0.5;
-  }
-  .timeline li.overdue .when,
-  .timeline li.overdue .rel {
-    color: var(--danger);
-  }
   .when {
-    grid-area: when;
     display: flex;
     flex-direction: column;
     font-size: 0.88rem;
@@ -441,31 +623,8 @@
     color: var(--muted);
     font-size: 0.76rem;
   }
-  .what {
-    grid-area: what;
-    min-width: 0;
-  }
   .name {
     overflow-wrap: break-word;
-  }
-  .amt {
-    grid-area: amt;
-  }
-  .act {
-    grid-area: act;
-  }
-  /* Phone width: the name gets the whole row, amount and action drop below. */
-  @media (max-width: 560px) {
-    .timeline li {
-      grid-template-columns: 5.5rem minmax(0, 1fr) auto;
-      grid-template-areas:
-        "when what what"
-        "when amt act";
-      row-gap: 0.25rem;
-    }
-    .amt {
-      text-align: left;
-    }
   }
   .tags {
     display: inline-flex;

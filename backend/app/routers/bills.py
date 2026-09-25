@@ -20,9 +20,11 @@ from ..schemas import (
     BillUpdate,
     DebtsResponse,
     MarkPaidRequest,
+    PlanResponse,
     UpcomingResponse,
 )
 from ..services.bills import build_debts, build_upcoming, effective_due
+from ..services.plan import build_plan
 from ..services.schedule import advance
 
 router = APIRouter(tags=["bills"])
@@ -110,6 +112,12 @@ async def mark_bill_paid(
     the split between principal and interest is the lender's, not ours.
     """
     bill = await _get_bill(session, bill_id)
+    if bill.source:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{bill.name} is kept up to date from {bill.source}; "
+            "it clears when the payment posts there",
+        )
     bill.last_paid_date = (body.paid_on if body else None) or date.today()
     following = advance(bill.next_due_date, bill.frequency, bill.due_day)
     if following is None:
@@ -138,3 +146,9 @@ async def upcoming(
 async def debts(session: AsyncSession = Depends(get_session)) -> DebtsResponse:
     """Plaid credit and loan accounts, plus bills carrying a balance."""
     return await build_debts(session, date.today())
+
+
+@router.get("/plan", response_model=PlanResponse)
+async def plan(session: AsyncSession = Depends(get_session)) -> PlanResponse:
+    """Checking balance less everything due before the next paycheck."""
+    return await build_plan(session, date.today())

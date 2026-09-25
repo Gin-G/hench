@@ -67,6 +67,7 @@ export const api = {
   markBillPaid: (id) => req(`/bills/${id}/paid`, { method: "POST" }),
   upcoming: (days = 30) => req(`/upcoming?days=${days}`),
   debts: () => req("/debts"),
+  plan: () => req("/plan"),
   renameAccount: (accountId, nickname) =>
     req(`/accounts/${encodeURIComponent(accountId)}`, {
       method: "PATCH",

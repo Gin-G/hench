@@ -165,6 +165,11 @@ class BillOut(BaseModel):
     apr: Decimal | None
     last_paid_date: date | None
     active: bool
+    due_date_estimated: bool = False
+    # Set when sync owns this bill (e.g. "longmont"); edits would be overwritten.
+    source: str | None = None
+    source_synced_at: datetime | None = None
+    source_error: str | None = None
 
 
 class MarkPaidRequest(BaseModel):
@@ -193,13 +198,21 @@ class UpcomingPayment(BaseModel):
     # keeps showing the old due date until the next statement closes.
     paid: bool = False
     account: str | None = None
+    # The due date is projected, not stated by the biller.
+    estimated: bool = False
+    # "cash" leaves a bank account on the due date; "card" is charged to a
+    # credit card and so is paid through that card's own payment.
+    pay_from: Literal["cash", "card"] = "cash"
+    # Set for a bill kept up to date by sync, e.g. "longmont".
+    synced_from: str | None = None
 
 
 class UpcomingResponse(BaseModel):
     start: date
     end: date
     payments: list[UpcomingPayment]
-    # Sum of every unpaid payment with a known amount, overdue included.
+    # Sum of every unpaid payment with a known amount, overdue included, less
+    # those charged to a card (counted in the card's own payment instead).
     total_due: Decimal
 
 
@@ -224,6 +237,47 @@ class DebtsResponse(BaseModel):
     debts: list[DebtOut]
     total_balance: Decimal
     total_minimum: Decimal
+
+
+class CashAccount(BaseModel):
+    account_id: str
+    name: str
+    available: Decimal
+
+
+class Paycheck(BaseModel):
+    name: str
+    date: date
+    amount: Decimal
+    account: str | None = None
+
+
+class PlanResponse(BaseModel):
+    """Cash now, less what is due before the next paycheck."""
+
+    as_of: date
+    cash_accounts: list[CashAccount]
+    cash_total: Decimal
+    next_paycheck: Paycheck | None
+    # Every projected paycheck over the next few weeks, for marking paydays.
+    paychecks: list[Paycheck]
+    # Payments due on or before this date are counted: the next payday, or a
+    # fortnight out when no paycheck has been detected.
+    until: date
+    due_total: Decimal
+    due_count: int
+    # Payments in the window with no known amount, so not in due_total.
+    unknown_amounts: int
+    left_over: Decimal
+    # Lowest projected checking balance between now and ``horizon``, walking
+    # every bill and paycheck in date order — and so the most that can go to
+    # debt today without a later bill coming up short.
+    horizon: date
+    low_point: Decimal
+    low_point_date: date
+    safe_extra: Decimal
+    # Highest-APR debt with a balance: where extra money does the most.
+    target_debt: DebtOut | None
 
 
 # --- Sync ------------------------------------------------------------------
