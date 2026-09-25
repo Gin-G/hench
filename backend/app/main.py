@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse
 
 from . import access
 from .config import get_settings
-from .routers import accounts, link, sankey, sync, transactions
+from .routers import accounts, bills, link, sankey, sync, transactions
 
 settings = get_settings()
 logging.basicConfig(level=settings.log_level.upper())
@@ -88,6 +88,7 @@ app.include_router(sync.router)
 app.include_router(transactions.router)
 app.include_router(sankey.router)
 app.include_router(accounts.router)
+app.include_router(bills.router)
 
 
 @app.get("/health", tags=["meta"])

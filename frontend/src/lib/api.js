@@ -57,6 +57,16 @@ export const api = {
     req(`/transactions/${encodeURIComponent(txnId)}/category`, {
       method: "DELETE",
     }),
+
+  // Bills and debt
+  bills: () => req("/bills"),
+  createBill: (bill) => req("/bills", { method: "POST", body: JSON.stringify(bill) }),
+  updateBill: (id, changes) =>
+    req(`/bills/${id}`, { method: "PATCH", body: JSON.stringify(changes) }),
+  deleteBill: (id) => req(`/bills/${id}`, { method: "DELETE" }),
+  markBillPaid: (id) => req(`/bills/${id}/paid`, { method: "POST" }),
+  upcoming: (days = 30) => req(`/upcoming?days=${days}`),
+  debts: () => req("/debts"),
 };
 
 // Human-friendly label for Plaid's SCREAMING_SNAKE_CASE categories.
@@ -69,9 +79,10 @@ export function prettyCategory(c) {
     .join(" ");
 }
 
+// Accepts numbers or the decimal strings the bills/debt endpoints return.
 export function fmtMoney(n) {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
-  }).format(n ?? 0);
+  }).format(Number(n ?? 0));
 }

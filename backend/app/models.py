@@ -299,6 +299,56 @@ class RecurringStream(Base):
     )
 
 
+class Bill(Base):
+    """A bill entered by hand, for everything Plaid cannot see.
+
+    Rent paid by check, a utility on an unlinked card, a car loan at a lender
+    that is not linked: none of these reach /liabilities/get or
+    /transactions/recurring/get, so they are recorded here instead. Setting
+    ``balance`` (and optionally ``apr``) makes the bill a debt as well, and it
+    then appears alongside the Plaid liabilities in ``GET /debts``.
+
+    Only ``next_due_date`` is stored; later occurrences are projected from
+    ``frequency``. ``due_day`` pins the day of month so a bill due on the 31st
+    comes back to the 31st after a short month instead of drifting to the 28th.
+    """
+
+    __tablename__ = "bills"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    # Expected payment. Null for a bill whose amount is not known in advance.
+    amount: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    # once | weekly | biweekly | monthly | quarterly | annually
+    frequency: Mapped[str] = mapped_column(String, default="monthly", nullable=False)
+    next_due_date: Mapped[date] = mapped_column(Date, index=True, nullable=False)
+    due_day: Mapped[int] = mapped_column(Integer, nullable=False)
+    autopay: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    category: Mapped[str | None] = mapped_column(String, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # --- Debt, when the bill is paying something down ----------------------
+    # Outstanding balance, positive = owed. Edited by hand; marking a payment
+    # does not reduce it, because how much of a payment is principal depends on
+    # interest the app does not know the lender charged.
+    balance: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    apr: Mapped[Decimal | None] = mapped_column(Rate, nullable=True)
+
+    last_paid_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Cleared when a one-off bill is paid, or by hand to stop a bill without
+    # losing its history.
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
 class Rule(Base):
     """Merchant-pattern -> category mapping, applied during sync.
 

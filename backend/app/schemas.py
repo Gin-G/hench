@@ -4,7 +4,9 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # --- Link ------------------------------------------------------------------
@@ -100,6 +102,117 @@ class RecurringStreamOut(BaseModel):
     status: str | None = None
     category_primary: str | None = None
     category_detailed: str | None = None
+
+
+# --- Bills and debts -------------------------------------------------------
+# Money stays Decimal (a JSON string) here too, for the same reason as above.
+BillFrequency = Literal["once", "weekly", "biweekly", "monthly", "quarterly", "annually"]
+
+
+class BillIn(BaseModel):
+    name: str = Field(min_length=1)
+    amount: Decimal | None = Field(default=None, ge=0)
+    frequency: BillFrequency = "monthly"
+    next_due_date: date
+    autopay: bool = False
+    category: str | None = None
+    notes: str | None = None
+    balance: Decimal | None = Field(default=None, ge=0)
+    apr: Decimal | None = Field(default=None, ge=0, le=100)
+    active: bool = True
+
+
+class BillUpdate(BaseModel):
+    """Partial update: only the fields sent are changed, and an explicit null
+    clears an optional field (e.g. ``balance: null`` stops a bill being a debt).
+    """
+
+    name: str | None = Field(default=None, min_length=1)
+    amount: Decimal | None = Field(default=None, ge=0)
+    frequency: BillFrequency | None = None
+    next_due_date: date | None = None
+    autopay: bool | None = None
+    category: str | None = None
+    notes: str | None = None
+    balance: Decimal | None = Field(default=None, ge=0)
+    apr: Decimal | None = Field(default=None, ge=0, le=100)
+    active: bool | None = None
+
+
+class BillOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    amount: Decimal | None
+    frequency: str
+    next_due_date: date
+    autopay: bool
+    category: str | None
+    notes: str | None
+    balance: Decimal | None
+    apr: Decimal | None
+    last_paid_date: date | None
+    active: bool
+
+
+class MarkPaidRequest(BaseModel):
+    # Defaults to today.
+    paid_on: date | None = None
+
+
+class UpcomingPayment(BaseModel):
+    """One dated payment on the timeline, whichever source it came from."""
+
+    # bill = entered by hand; card = Plaid liability; recurring = a stream
+    # Plaid detected from transaction history.
+    source: Literal["bill", "card", "recurring"]
+    # Bill id, account_id or stream_id, depending on source.
+    ref_id: str
+    name: str
+    due_date: date
+    amount: Decimal | None = None
+    # "minimum" for card minimums, "average" for a detected stream's typical
+    # amount; null when the amount is the bill's own fixed figure.
+    amount_basis: Literal["minimum", "average"] | None = None
+    statement_balance: Decimal | None = None
+    autopay: bool | None = None
+    overdue: bool = False
+    # A card whose last payment is on or after its last statement date — Plaid
+    # keeps showing the old due date until the next statement closes.
+    paid: bool = False
+    account: str | None = None
+
+
+class UpcomingResponse(BaseModel):
+    start: date
+    end: date
+    payments: list[UpcomingPayment]
+    # Sum of every unpaid payment with a known amount, overdue included.
+    total_due: Decimal
+
+
+class DebtOut(BaseModel):
+    source: Literal["plaid", "manual"]
+    # account_id, or the bill id for manual debts.
+    ref_id: str
+    name: str
+    institution: str | None = None
+    # credit | student | mortgage | loan | other
+    kind: str
+    balance: Decimal
+    credit_limit: Decimal | None = None
+    apr: Decimal | None = None
+    minimum_payment: Decimal | None = None
+    next_due_date: date | None = None
+    statement_balance: Decimal | None = None
+    is_overdue: bool = False
+
+
+class DebtsResponse(BaseModel):
+    debts: list[DebtOut]
+    total_balance: Decimal
+    total_minimum: Decimal
 
 
 # --- Sync ------------------------------------------------------------------

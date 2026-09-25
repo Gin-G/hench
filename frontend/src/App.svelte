@@ -1,5 +1,6 @@
 <script>
   import { api } from "./lib/api.js";
+  import Bills from "./lib/Bills.svelte";
   import Link from "./lib/Link.svelte";
   import Sankey from "./lib/Sankey.svelte";
   import Transactions from "./lib/Transactions.svelte";
@@ -79,19 +80,26 @@
       >
         Transactions
       </button>
+      <button class:active={view === "bills"} onclick={() => (view = "bills")}>
+        Bills &amp; debt
+      </button>
     </div>
-    <label>
-      Month
-      <select bind:value={month}>
-        {#each months as m}<option value={m}>{m}</option>{/each}
-      </select>
-    </label>
+    {#if view !== "bills"}
+      <label>
+        Month
+        <select bind:value={month}>
+          {#each months as m}<option value={m}>{m}</option>{/each}
+        </select>
+      </label>
+    {/if}
   </div>
 
   {#if view === "sankey"}
-    <Sankey {month} />
+    <Sankey {month} {reloadKey} />
+  {:else if view === "transactions"}
+    <Transactions {month} {reloadKey} />
   {:else}
-    <Transactions {month} />
+    <Bills {reloadKey} />
   {/if}
 </main>
 
@@ -138,7 +146,10 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-wrap: wrap;
+    gap: 0.75rem;
     margin-bottom: 1rem;
+    min-height: 2.3rem;
   }
   .tabs button {
     border-radius: 0;
