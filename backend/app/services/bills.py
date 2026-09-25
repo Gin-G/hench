@@ -22,11 +22,6 @@ from ..models import Account, Bill, Item, RecurringStream
 from ..schemas import DebtOut, DebtsResponse, UpcomingPayment, UpcomingResponse
 from .schedule import PLAID_FREQUENCIES, next_on_or_after, occurrences
 
-# A detected stream in these categories is paying a card or loan, which is
-# already on the timeline as that card's liability — or it is moving money
-# between your own accounts. Either way, counting it would double it.
-_EXCLUDED_STREAM_CATEGORIES = {"LOAN_PAYMENTS", "TRANSFER_OUT"}
-
 # Plaid account types that carry debt.
 _DEBT_TYPES = {"credit", "loan"}
 
@@ -123,8 +118,6 @@ def _stream_payments(
     for stream in streams:
         if stream.predicted_next_date is None:
             continue
-        if stream.category_primary in _EXCLUDED_STREAM_CATEGORIES:
-            continue
         frequency = PLAID_FREQUENCIES.get(stream.frequency or "")
         if stream.frequency == "SEMI_MONTHLY":
             frequency = "semi_monthly"
@@ -169,6 +162,11 @@ async def build_upcoming(
             )
         ).all()
     )
+    # Loan payments and outbound transfers stay in. Filtering them by category
+    # looked like it would avoid double-counting linked cards, but on real data
+    # it dropped the mortgage, student loans and cards at unlinked lenders —
+    # the payments Plaid can only see from the checking side. Where a stream
+    # does duplicate a linked liability, the user hides it.
     streams = list(
         (
             await session.scalars(
