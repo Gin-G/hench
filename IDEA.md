@@ -7,7 +7,7 @@ progress: 75
 
 Self-hosted personal finance dashboard. Plaid pulls bank transactions; the UI renders a monthly Sankey cash-flow chart plus a transactions table with inline category overrides. FastAPI + async SQLAlchemy + CNPG Postgres, Svelte 5 + ECharts, deployed to K3s by ArgoCD.
 
-Running against Plaid **production** since 2026-08-03. Production keys live in OpenBao at `hench/plaid`; the chart pointed at the sandbox host until then, which made every `/link/create_link_token` return 500 on `INVALID_API_KEYS` (Plaid issues a separate secret per environment). Chase is linked and holds real data — 6 accounts, 3 credit-card liabilities, ~300 transactions. The whole vhost sits behind Traefik BasicAuth: the app has no auth of its own and the FQDN is public through Cloudflare, so until that landed anyone who knew the hostname could read the lot. Secrets come from OpenBao through the `openbao-k8s-backend` ClusterSecretStore (Kubernetes auth, no per-namespace token). `fernet_key` must never be rotated casually — it encrypts Plaid access tokens at rest, so replacing it orphans every linked Item.
+Running against Plaid **production** since 2026-08-03. Production keys live in OpenBao at `hench/plaid`; the chart pointed at the sandbox host until then, which made every `/link/create_link_token` return 500 on `INVALID_API_KEYS` (Plaid issues a separate secret per environment). Chase is linked and holds real data — 6 accounts, 3 credit-card liabilities, ~300 transactions. The whole vhost sits behind Cloudflare Access (Google login, one allow-listed email), and the API re-verifies the Access JWT itself so nothing reaching Traefik around the tunnel gets in. Before any auth landed the FQDN was public and anyone who knew the hostname could read the lot. Secrets come from OpenBao through the `openbao-k8s-backend` ClusterSecretStore (Kubernetes auth, no per-namespace token). `fernet_key` must never be rotated casually — it encrypts Plaid access tokens at rest, so replacing it orphans every linked Item.
 
 Full review notes, including the reasoning behind the open items, are in `REVIEW.md`.
 
@@ -58,10 +58,10 @@ liabilities populate immediately on link.
 - [x] Confirm whether hench.nickknows.net answers off-network, since every route is unauthenticated — it did, unauthenticated, serving real Chase data over Cloudflare
 - [x] Put auth in front of the API via Traefik forwardAuth, an OIDC proxy or a LAN-only ingress — Traefik BasicAuth over the whole vhost, htpasswd from OpenBao at hench/basicauth
 - [x] Add NetworkPolicies so the API and database are not reachable from other namespaces — in-cluster pods could hit hench-backend:8000 directly and bypass ingress BasicAuth entirely
-- [ ] Replace ingress BasicAuth with Cloudflare Access or an OIDC proxy, since basic auth has no session, no MFA and one shared credential
-- [ ] Consider authenticating the API itself rather than only at the ingress, since NetworkPolicy is now the only thing preventing an in-cluster bypass
+- [x] Replace ingress BasicAuth with Cloudflare Access or an OIDC proxy, since basic auth has no session, no MFA and one shared credential — Cloudflare Access with Google login, allow-listed to one email; BasicAuth templates kept but disabled
+- [x] Consider authenticating the API itself rather than only at the ingress, since NetworkPolicy is now the only thing preventing an in-cluster bypass — backend verifies the Cf-Access-Jwt-Assertion signature, audience and email on every route but /health, and refuses to start in production without it
 - [ ] Encrypt the CNPG volume at rest: rook-ceph-block has no encrypted:true, so transactions, balances, masks and liabilities sit in plaintext on the OSDs (Plaid access tokens are Fernet-encrypted and unaffected)
-- [ ] Restore Plaid webhook delivery, which BasicAuth now blocks — needs a path exemption plus Plaid-Verification JWT checking, so sync is nightly-only until then
+- [ ] Restore Plaid webhook delivery, which Cloudflare Access and the API token check now block — needs an Access bypass and API exemption for /api/webhook plus Plaid-Verification JWT checking, so sync is nightly-only until then
 - [x] Fix the UI not re-rendering after a sync or a bank link: App.svelte reloads only months and items, while Sankey and Transactions re-fetch solely on a month prop change
 - [ ] Verify the Plaid-Verification JWT on the webhook, which is currently unchecked
 - [x] Fix sync_all error handling, which leaves the session in pending-rollback so one bad Item fails the rest

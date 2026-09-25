@@ -64,6 +64,12 @@ Plaid + Fernet secrets come from the ESO-managed config secret.
   value: {{ printf "https://%s/api/webhook" .Values.frontend.fqdn | quote }}
 - name: CORS_ORIGINS
   value: {{ printf "[\"https://%s\"]" .Values.frontend.fqdn | quote }}
+- name: CF_ACCESS_TEAM_DOMAIN
+  value: {{ required "cfAccess.teamDomain is required" .Values.cfAccess.teamDomain | quote }}
+- name: CF_ACCESS_AUD
+  value: {{ required "cfAccess.aud is required: copy the AUD tag from the hench Access application" .Values.cfAccess.aud | quote }}
+- name: CF_ACCESS_ALLOWED_EMAILS
+  value: {{ required "cfAccess.allowedEmails is required" .Values.cfAccess.allowedEmails | toJson | quote }}
 - name: LOG_LEVEL
   value: {{ .Values.backend.env.LOG_LEVEL | quote }}
 - name: HOST

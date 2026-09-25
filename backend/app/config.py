@@ -66,6 +66,21 @@ class Settings(BaseSettings):
         default_factory=lambda: ["*"], alias="CORS_ORIGINS"
     )
 
+    # --- Cloudflare Access ----------------------------------------------------
+    # Team domain, e.g. "silent-field-be08.cloudflareaccess.com", and the
+    # Application Audience (AUD) tag of the hench Access application. Leave
+    # both unset for local dev; production refuses to start without them.
+    cf_access_team_domain: str = Field(default="", alias="CF_ACCESS_TEAM_DOMAIN")
+    cf_access_aud: str = Field(default="", alias="CF_ACCESS_AUD")
+    # JSON list. Checked in addition to the Access policy, not instead of it.
+    cf_access_allowed_emails: list[str] = Field(
+        default_factory=list, alias="CF_ACCESS_ALLOWED_EMAILS"
+    )
+
+    @property
+    def cf_access_enabled(self) -> bool:
+        return bool(self.cf_access_team_domain and self.cf_access_aud)
+
     @property
     def link_name(self) -> str:
         return "hench"

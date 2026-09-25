@@ -4,8 +4,8 @@ Routes are mounted at root (no ``/api`` prefix): in the cluster the Traefik
 ``strip-api`` middleware rewrites ``/api/*`` -> ``/*`` before traffic reaches
 this service, and the Vite dev proxy does the same locally.
 
-Auth is intentionally network-level only (single-user homelab). The structure
-leaves room to add OIDC middleware here later without touching the routers.
+Every route except /health requires a valid Cloudflare Access token for an
+allow-listed email; see access.py.
 """
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from . import access
 from .config import get_settings
 from .routers import accounts, link, sankey, sync, transactions
 
@@ -26,6 +27,17 @@ logging.basicConfig(level=settings.log_level.upper())
 log = logging.getLogger("hench")
 
 app = FastAPI(title="hench", version="0.1.0")
+
+if settings.cf_access_enabled:
+    access.install(app, settings)
+elif settings.plaid_env == "production":
+    # Real bank data with no auth in front of it is never an acceptable
+    # fallback, so a missing setting fails the rollout instead.
+    raise RuntimeError(
+        "CF_ACCESS_TEAM_DOMAIN and CF_ACCESS_AUD must be set when PLAID_ENV=production"
+    )
+else:
+    log.warning("Cloudflare Access verification is off (non-production dev mode)")
 
 
 @app.exception_handler(plaid.ApiException)

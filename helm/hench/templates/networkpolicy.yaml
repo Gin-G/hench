@@ -80,7 +80,8 @@ spec:
     - Ingress
   ingress:
     - from:
-        # Only the ingress controller, so every request has passed BasicAuth.
+        # Only the ingress controller. The API also verifies the Cloudflare
+        # Access token itself, so this is defence in depth, not the only gate.
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressControllerNamespace }}

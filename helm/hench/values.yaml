@@ -53,13 +53,27 @@ ingress:
   className: traefik
   clusterIssuer: letsencrypt-cloudflare
   externalDnsTarget: "75c20a42-2dd1-4297-8a51-3aefbcb3f004.cfargotunnel.com"
-  # HTTP basic auth across the whole vhost, UI and API alike. The app itself
-  # has no authentication, and the FQDN is public, so this is the only thing
-  # standing between the internet and real bank data. Credentials live in
-  # OpenBao (secrets.basicAuthPath), never here.
+  # HTTP basic auth across the whole vhost. Superseded by Cloudflare Access
+  # (cfAccess below) and kept only as a fallback: re-enabling it stacks a
+  # second password prompt on top of Access. Credentials live in OpenBao
+  # (secrets.basicAuthPath), never here.
   basicAuth:
-    enabled: true
+    enabled: false
     realm: hench
+# Cloudflare Access (Google login) in front of hench.nickknows.net. Access
+# rejects anyone off the allow-list at the edge, and the backend re-verifies
+# the signed Cf-Access-Jwt-Assertion on every request, so a request that
+# reaches Traefik any other way still gets a 401. None of these are secrets:
+# the token signature is what's checked, not knowledge of the AUD.
+cfAccess:
+  teamDomain: silent-field-be08.cloudflareaccess.com
+  # Application Audience (AUD) tag from Zero Trust > Access > Applications >
+  # hench > Overview. Rendering fails until it is set.
+  aud: "67dabe01c37ac2b4ef2e2903add1bb43b78d3eeefc6f6ccdb05d88ee2c8f9765"
+  # Checked by the API in addition to the Access policy, so loosening the
+  # policy by mistake does not expose bank data.
+  allowedEmails:
+    - nickco7@gmail.com
 # Namespace-local firewall. BasicAuth is enforced at the ingress, so without
 # this anything already running in the cluster can reach the API and the
 # database directly and route around it entirely.
