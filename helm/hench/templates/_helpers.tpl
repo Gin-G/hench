@@ -20,6 +20,10 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{ .Values.app.name }}-config
 {{- end -}}
 
+{{- define "hench.longmontSecret" -}}
+{{ .Values.app.name }}-longmont
+{{- end -}}
+
 {{- define "hench.basicAuthSecret" -}}
 {{ .Values.app.name }}-basicauth
 {{- end -}}
@@ -70,6 +74,22 @@ Plaid + Fernet secrets come from the ESO-managed config secret.
   value: {{ required "cfAccess.aud is required: copy the AUD tag from the hench Access application" .Values.cfAccess.aud | quote }}
 - name: CF_ACCESS_ALLOWED_EMAILS
   value: {{ required "cfAccess.allowedEmails is required" .Values.cfAccess.allowedEmails | toJson | quote }}
+{{- if .Values.longmont.enabled }}
+# Optional so the pods still start if the Longmont secret has not synced; the
+# utility fetch then reports itself unconfigured instead.
+- name: LONGMONT_USERNAME
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "hench.longmontSecret" . }}
+      key: LONGMONT_USERNAME
+      optional: true
+- name: LONGMONT_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "hench.longmontSecret" . }}
+      key: LONGMONT_PASSWORD
+      optional: true
+{{- end }}
 - name: LOG_LEVEL
   value: {{ .Values.backend.env.LOG_LEVEL | quote }}
 - name: HOST

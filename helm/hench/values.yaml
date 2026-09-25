@@ -109,6 +109,12 @@ secrets:
     # Render a namespaced, token-authenticated SecretStore instead. Requires an
     # openbao-credentials secret in this namespace, created out of band.
     create: false
+# City of Longmont utility billing portal, read for the current bill.
+longmont:
+  enabled: true
+  secretPath: hench/longmont
+  usernameKey: username
+  passwordKey: password
 cnpg:
   enabled: true
   instances: 1

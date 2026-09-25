@@ -57,6 +57,12 @@ class Settings(BaseSettings):
     #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     fernet_key: str = Field(default="", alias="FERNET_KEY")
 
+    # --- City of Longmont utility portal ------------------------------------
+    # Login for myutilityaccount.longmontcolorado.gov, from OpenBao at
+    # hench/longmont. Both empty means the utility fetch is simply off.
+    longmont_username: str = Field(default="", alias="LONGMONT_USERNAME")
+    longmont_password: str = Field(default="", alias="LONGMONT_PASSWORD")
+
     # --- Server -------------------------------------------------------------
     host: str = Field(default="0.0.0.0", alias="HOST")
     port: int = Field(default=8000, alias="PORT")
