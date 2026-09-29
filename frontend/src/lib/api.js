@@ -66,6 +66,7 @@ export const api = {
   deleteBill: (id) => req(`/bills/${id}`, { method: "DELETE" }),
   markBillPaid: (id) => req(`/bills/${id}/paid`, { method: "POST" }),
   upcoming: (days = 30) => req(`/upcoming?days=${days}`),
+  ledger: (days = 30) => req(`/ledger?days=${days}`),
   debts: () => req("/debts"),
   plan: () => req("/plan"),
   googleStatus: () => req("/oauth/google/status"),
@@ -83,6 +84,12 @@ export const api = {
     req(`/accounts/${encodeURIComponent(accountId)}`, {
       method: "PATCH",
       body: JSON.stringify({ pay_from_account_id: payFromAccountId }),
+    }),
+  // APR override and promo fields on a card or loan; null clears each.
+  updateAccount: (accountId, changes) =>
+    req(`/accounts/${encodeURIComponent(accountId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(changes),
     }),
   hiddenStreams: () =>
     req("/recurring?include_hidden=true").then((streams) =>
@@ -111,4 +118,25 @@ export function fmtMoney(n) {
     style: "currency",
     currency: "USD",
   }).format(Number(n ?? 0));
+}
+
+// "YYYY-MM-DD" parsed as a local date; new Date(str) would read it as UTC
+// midnight and show the previous day west of Greenwich.
+export function parseDate(s) {
+  const [y, m, d] = s.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+
+export function fmtDate(s, opts = { weekday: "short", month: "short", day: "numeric" }) {
+  return parseDate(s).toLocaleDateString("en-US", opts);
+}
+
+export function relative(s) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const diff = Math.round((parseDate(s) - today) / 86400000);
+  if (diff === 0) return "today";
+  if (diff === 1) return "tomorrow";
+  if (diff < 0) return `${-diff}d late`;
+  return `in ${diff}d`;
 }

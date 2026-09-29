@@ -2,7 +2,8 @@
 
 These are the read side of what services.enrich snapshots during sync, plus
 the edits the user makes on top of Plaid's data: account nicknames, which
-bank account pays a card or loan, and hiding a detected stream. Sync never
+bank account pays a card or loan, its rate and any promo, and hiding a
+detected stream. Sync never
 writes any of them. Combining them into a dated timeline is services.bills' job, not this router's.
 """
 from __future__ import annotations
@@ -66,7 +67,8 @@ async def update_account(
     body: AccountUpdate,
     session: AsyncSession = Depends(get_session),
 ) -> AccountOut:
-    """Rename an account, or pick the bank account a card or loan is paid from.
+    """Rename an account; for a card or loan, pick the bank account that pays
+    it, override its APR, or record a promotional rate.
 
     Those are the only edits; the rest is Plaid's.
     """
@@ -97,6 +99,20 @@ async def update_account(
                     status_code=422, detail="Pay from must be a linked bank account"
                 )
         account.pay_from_account_id = source_id
+    rate_fields = {
+        k: v
+        for k, v in changes.items()
+        if k in ("apr_override", "promo_apr", "promo_ends_on", "promo_balance",
+                 "promo_deferred_interest")
+    }
+    if rate_fields:
+        if account.type not in ("credit", "loan"):
+            raise HTTPException(
+                status_code=422, detail="Rates and promos are for cards and loans"
+            )
+        for field, value in rate_fields.items():
+            # The deferred-interest flag cannot be null, only turned off.
+            setattr(account, field, bool(value) if field == "promo_deferred_interest" else value)
     await session.flush()
     return _account_out(account, institution_name)
 

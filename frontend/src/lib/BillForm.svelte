@@ -17,6 +17,11 @@
   let isDebt = $state(initial?.balance != null);
   let balance = $state(initial?.balance ?? "");
   let apr = $state(initial?.apr != null ? String(Number(initial.apr)) : "");
+  let hasPromo = $state(initial?.promo_apr != null);
+  let promoApr = $state(initial?.promo_apr != null ? String(Number(initial.promo_apr)) : "");
+  let promoEnds = $state(initial?.promo_ends_on ?? "");
+  let promoBalance = $state(initial?.promo_balance ?? "");
+  let promoDeferred = $state(initial?.promo_deferred_interest ?? false);
   let notes = $state(initial?.notes ?? "");
   let saving = $state(false);
   let error = $state(null);
@@ -36,6 +41,10 @@
       autopay,
       balance: isDebt ? orNull(balance) : null,
       apr: isDebt ? orNull(apr) : null,
+      promo_apr: isDebt && hasPromo ? orNull(promoApr) : null,
+      promo_ends_on: isDebt && hasPromo ? promoEnds || null : null,
+      promo_balance: isDebt && hasPromo ? orNull(promoBalance) : null,
+      promo_deferred_interest: isDebt && hasPromo && promoDeferred,
       notes: notes.trim() || null,
     };
     // When editing, send only what changed. Re-sending an unchanged due date
@@ -95,6 +104,26 @@
         APR %
         <input type="number" step="0.01" min="0" max="100" bind:value={apr} />
       </label>
+      <label class="check">
+        <input type="checkbox" bind:checked={hasPromo} /> Promo rate
+      </label>
+      {#if hasPromo}
+        <label>
+          Promo APR %
+          <input type="number" step="0.01" min="0" max="100" bind:value={promoApr} required />
+        </label>
+        <label>
+          Promo ends
+          <input type="date" bind:value={promoEnds} required />
+        </label>
+        <label>
+          On balance of
+          <input type="number" step="0.01" min="0" bind:value={promoBalance} placeholder="whole balance" />
+        </label>
+        <label class="check">
+          <input type="checkbox" bind:checked={promoDeferred} /> Deferred interest
+        </label>
+      {/if}
     {/if}
     <label class="wide">
       Notes

@@ -83,6 +83,11 @@ class AccountOut(BaseModel):
     balances_updated_at: datetime | None = None
     institution_name: str | None = None
     pay_from_account_id: str | None = None
+    apr_override: Decimal | None = None
+    promo_apr: Decimal | None = None
+    promo_ends_on: date | None = None
+    promo_balance: Decimal | None = None
+    promo_deferred_interest: bool = False
     liability: LiabilityOut | None = None
 
 
@@ -115,6 +120,12 @@ class AccountUpdate(BaseModel):
     # Credit and loan accounts only: the bank account that pays them. Null
     # goes back to checking.
     pay_from_account_id: str | None = None
+    # Credit and loan accounts only. Null clears each.
+    apr_override: Decimal | None = Field(default=None, ge=0, le=100)
+    promo_apr: Decimal | None = Field(default=None, ge=0, le=100)
+    promo_ends_on: date | None = None
+    promo_balance: Decimal | None = Field(default=None, ge=0)
+    promo_deferred_interest: bool | None = None
 
 
 class RecurringStreamUpdate(BaseModel):
@@ -137,6 +148,10 @@ class BillIn(BaseModel):
     pay_from_account_id: str | None = None
     balance: Decimal | None = Field(default=None, ge=0)
     apr: Decimal | None = Field(default=None, ge=0, le=100)
+    promo_apr: Decimal | None = Field(default=None, ge=0, le=100)
+    promo_ends_on: date | None = None
+    promo_balance: Decimal | None = Field(default=None, ge=0)
+    promo_deferred_interest: bool = False
     active: bool = True
 
 
@@ -155,6 +170,10 @@ class BillUpdate(BaseModel):
     pay_from_account_id: str | None = None
     balance: Decimal | None = Field(default=None, ge=0)
     apr: Decimal | None = Field(default=None, ge=0, le=100)
+    promo_apr: Decimal | None = Field(default=None, ge=0, le=100)
+    promo_ends_on: date | None = None
+    promo_balance: Decimal | None = Field(default=None, ge=0)
+    promo_deferred_interest: bool | None = None
     active: bool | None = None
 
 
@@ -172,6 +191,10 @@ class BillOut(BaseModel):
     pay_from_account_id: str | None = None
     balance: Decimal | None
     apr: Decimal | None
+    promo_apr: Decimal | None = None
+    promo_ends_on: date | None = None
+    promo_balance: Decimal | None = None
+    promo_deferred_interest: bool = False
     last_paid_date: date | None
     active: bool
     due_date_estimated: bool = False
@@ -239,7 +262,26 @@ class DebtOut(BaseModel):
     kind: str
     balance: Decimal
     credit_limit: Decimal | None = None
+    # The rate an extra dollar paid today saves: the promo rate while a promo
+    # covers the whole balance, the regular rate otherwise. What the list is
+    # ranked by.
     apr: Decimal | None = None
+    # The regular rate: the user's override, else Plaid's, else the bill's.
+    base_apr: Decimal | None = None
+    apr_overridden: bool = False
+    promo_apr: Decimal | None = None
+    promo_ends_on: date | None = None
+    promo_balance: Decimal | None = None
+    promo_deferred_interest: bool = False
+    # The promo has not ended yet.
+    promo_active: bool = False
+    # Monthly payment that clears the promo balance by the end date, and
+    # whether the minimum alone does.
+    promo_monthly_needed: Decimal | None = None
+    promo_on_track: bool | None = None
+    # Plaid's APR breakdown for a card, e.g. a 0% balance transfer on part of
+    # the balance: a hint for filling in the promo.
+    plaid_aprs: list[dict] = []
     minimum_payment: Decimal | None = None
     next_due_date: date | None = None
     statement_balance: Decimal | None = None
@@ -247,9 +289,13 @@ class DebtOut(BaseModel):
 
 
 class DebtsResponse(BaseModel):
+    # Highest current rate first.
     debts: list[DebtOut]
     total_balance: Decimal
     total_minimum: Decimal
+    # Where extra money should go now, and why.
+    target: DebtOut | None = None
+    target_reason: str | None = None
 
 
 class CashAccount(BaseModel):
@@ -316,8 +362,9 @@ class PlanResponse(BaseModel):
     # projected over the same lookahead. A negative low point there is money
     # checking must move over, and comes out of safe_extra.
     funding_accounts: list[FundingAccount] = []
-    # Highest-APR debt with a balance: where extra money does the most.
+    # Where extra money does the most; see DebtsResponse.target.
     target_debt: DebtOut | None
+    target_reason: str | None = None
 
 
 # --- Sync ------------------------------------------------------------------
@@ -373,3 +420,52 @@ class SankeyResponse(BaseModel):
     links: list[SankeyLink]
     total_income: float
     total_spending: float
+
+
+# --- Ledger ------------------------------------------------------------------
+class LedgerAccount(BaseModel):
+    """One running balance on the ledger.
+
+    ``cash`` is money held (checking, pooled, or another bank account);
+    ``debt`` is owed (a card, a loan, or a bill carrying a balance), so it
+    goes down as payments reach it and up as charges land on a card.
+    """
+
+    key: str
+    name: str
+    kind: Literal["cash", "debt"]
+    start_balance: Decimal
+    end_balance: Decimal
+    # Cash accounts: the lowest the balance reaches, and when.
+    low_point: Decimal | None = None
+    low_point_date: date | None = None
+
+
+class LedgerEntry(BaseModel):
+    date: date
+    kind: Literal["payment", "paycheck", "transfer"]
+    name: str
+    amount: Decimal | None = None
+    # Exactly one of these, by kind.
+    payment: UpcomingPayment | None = None
+    inflow: Paycheck | None = None
+    # The account the money leaves (or the card it is charged to), and its
+    # balance straight after. Null when the entry moves nothing: already
+    # paid, amount unknown, or an account with no balance to track.
+    from_key: str | None = None
+    from_name: str | None = None
+    from_balance: Decimal | None = None
+    # The account the money reaches: the card or loan being paid down, or the
+    # bank account a paycheck or transfer lands in.
+    to_key: str | None = None
+    to_name: str | None = None
+    to_balance: Decimal | None = None
+
+
+class LedgerResponse(BaseModel):
+    start: date
+    end: date
+    accounts: list[LedgerAccount]
+    entries: list[LedgerEntry]
+    paychecks: list[Paycheck]
+    transfers_in: list[Paycheck]

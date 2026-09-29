@@ -1,6 +1,8 @@
 <script>
-  import { api, fmtMoney } from "./api.js";
+  import { api, fmtMoney, fmtDate } from "./api.js";
   import BillForm from "./BillForm.svelte";
+  import Debts from "./Debts.svelte";
+  import Ledger from "./Ledger.svelte";
 
   let { reloadKey = 0, gmailResult = null } = $props();
 
@@ -14,6 +16,7 @@
 
   let days = $state(30);
   let upcoming = $state(null);
+  let ledger = $state(null);
   let debts = $state(null);
   let plan = $state(null);
   let gmail = $state(null);
@@ -28,15 +31,13 @@
   // Detected streams the user hid from the timeline.
   let hidden = $state([]);
   let showHidden = $state(false);
-  // account_id being renamed, and the draft name.
-  let renaming = $state(null);
-  let renameDraft = $state("");
 
   async function load() {
     error = null;
     try {
-      [upcoming, debts, bills, hidden, plan, gmail, accounts] = await Promise.all([
+      [upcoming, ledger, debts, bills, hidden, plan, gmail, accounts] = await Promise.all([
         api.upcoming(days),
+        api.ledger(days),
         api.debts(),
         api.bills(),
         api.hiddenStreams(),
@@ -84,103 +85,6 @@
     act(() => api.deleteBill(bill.id));
   }
 
-  // Where a payment can be drawn from, besides checking (the default): other
-  // bank accounts, and for a bill, a credit card it is charged to.
-  function payFromOptions(p) {
-    return accounts.filter(
-      (a) =>
-        (a.type === "depository" && a.subtype !== "checking") ||
-        (p.source === "bill" && a.type === "credit") ||
-        a.account_id === p.pay_from_account_id
-    );
-  }
-
-  function accountName(a) {
-    const name = a.nickname || a.name || a.official_name || "Account";
-    return a.nickname || !a.mask ? name : `${name} ••${a.mask}`;
-  }
-
-  function setPayFrom(p, value) {
-    const id = value || null;
-    act(() =>
-      p.source === "bill"
-        ? api.updateBill(p.ref_id, { pay_from_account_id: id })
-        : api.setAccountPayFrom(p.ref_id, id)
-    );
-  }
-
-  function startRename(d) {
-    renaming = d.ref_id;
-    // Start from the current label unless it is just the institution's
-    // generic name, which is the thing being replaced.
-    renameDraft = d.name.includes("••") ? "" : d.name;
-  }
-
-  function finishRename(save) {
-    // Enter or Escape closes the input, which then fires blur: already done.
-    if (renaming === null) return;
-    const id = renaming;
-    renaming = null;
-    if (save) act(() => api.renameAccount(id, renameDraft));
-  }
-
-  function focus(node) {
-    node.focus();
-  }
-
-  // "YYYY-MM-DD" parsed as a local date; new Date(str) would read it as UTC
-  // midnight and show the previous day west of Greenwich.
-  function parseDate(s) {
-    const [y, m, d] = s.split("-").map(Number);
-    return new Date(y, m - 1, d);
-  }
-
-  function fmtDate(s) {
-    return parseDate(s).toLocaleDateString("en-US", {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-    });
-  }
-
-  function relative(s) {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const diff = Math.round((parseDate(s) - today) / 86400000);
-    if (diff === 0) return "today";
-    if (diff === 1) return "tomorrow";
-    if (diff < 0) return `${-diff}d late`;
-    return `in ${diff}d`;
-  }
-
-  function utilization(d) {
-    if (!d.credit_limit || Number(d.credit_limit) <= 0) return null;
-    return Math.min(100, (Number(d.balance) / Number(d.credit_limit)) * 100);
-  }
-
-  const SOURCE_LABEL = { card: "card", recurring: "detected" };
-
-  // Payments in due-date order, with each payday and transfer in slotted in
-  // ahead of the payments due that day or later.
-  let rows = $derived.by(() => {
-    if (!upcoming) return [];
-    const inflows = [
-      ...(plan?.paychecks ?? []).map((c) => ({ ...c, kind: "payday" })),
-      ...(plan?.transfers_in ?? []).map((c) => ({ ...c, kind: "transfer" })),
-    ]
-      .filter((c) => c.date <= upcoming.end)
-      .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-    const inRow = (c) => ({ key: `${c.kind}-${c.stream_id ?? c.name}-${c.date}`, inflow: c });
-    const out = [];
-    let i = 0;
-    for (const p of upcoming.payments) {
-      while (i < inflows.length && inflows[i].date < p.due_date) out.push(inRow(inflows[i++]));
-      out.push({ key: `${p.source}-${p.ref_id}-${p.due_date}`, payment: p });
-    }
-    while (i < inflows.length) out.push(inRow(inflows[i++]));
-    return out;
-  });
-
   let dueCount = $derived(
     upcoming?.payments.filter((p) => !p.paid && p.pay_from === "cash").length ?? 0
   );
@@ -188,6 +92,11 @@
   let nextUp = $derived(
     upcoming?.payments.find((p) => !p.overdue && !p.paid) ?? null
   );
+
+  function editBill(id) {
+    confirmDelete = null;
+    editing = bills.find((b) => b.id === id) ?? null;
+  }
 
   $effect(() => {
     days; // re-fetch when the horizon changes
@@ -243,7 +152,7 @@
             Less {fmtMoney(Number(plan.low_point) - Number(plan.safe_extra))} to cover the shortfall below.
           {/if}
           {#if plan.target_debt}
-            Best spent on <strong>{plan.target_debt.name}</strong>, {Number(plan.target_debt.apr).toFixed(2)}% APR on {fmtMoney(plan.target_debt.balance)}.
+            Best spent on <strong>{plan.target_debt.name}</strong> ({fmtMoney(plan.target_debt.balance)}): {plan.target_reason}
           {/if}
         </span>
       {/if}
@@ -293,171 +202,9 @@
   </div>
 </section>
 
-<div class="columns">
-  <section class="panel">
-    <div class="head">
-      <h2>Upcoming</h2>
-      <select bind:value={days} aria-label="Horizon">
-        {#each HORIZONS as h}<option value={h}>Next {h} days</option>{/each}
-      </select>
-    </div>
-    {#if upcoming && !upcoming.payments.length}
-      <p class="empty">Nothing due in the next {days} days.</p>
-    {/if}
-    <div class="scroll">
-      <table class="upcoming">
-        <thead>
-          <tr>
-            <th>Merchant</th>
-            <th class="num">Amount due</th>
-            <th>Due date</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each rows as r (r.key)}
-            {#if r.inflow?.kind === "payday"}
-              <tr class="payday">
-                <td colspan="4">
-                  <span>💵 {r.inflow.name} · ~{fmtMoney(r.inflow.amount)}</span>
-                  <span class="rel">{fmtDate(r.inflow.date)}</span>
-                </td>
-              </tr>
-            {:else if r.inflow}
-              <tr class="transfer">
-                <td class="merchant">
-                  <span class="name">↘ {r.inflow.name}</span>
-                  <span class="tags">
-                    <span class="tag" title="Detected by Plaid from past transfers">transfer in</span>
-                    {#if r.inflow.account}<span class="tag">to {r.inflow.account}</span>{/if}
-                  </span>
-                </td>
-                <td class="num amt">+{fmtMoney(r.inflow.amount)}<span class="basis">avg</span></td>
-                <td class="when">
-                  <span>{fmtDate(r.inflow.date)}<span class="basis" title="Projected from past transfers"> est.</span></span>
-                  <span class="rel">{relative(r.inflow.date)}</span>
-                </td>
-                <td class="act">
-                  <button
-                    class="small ghost"
-                    title="Stop counting this detected transfer"
-                    onclick={() => act(() => api.setStreamHidden(r.inflow.stream_id, true))}
-                  >
-                    Hide
-                  </button>
-                </td>
-              </tr>
-            {:else}
-              {@const p = r.payment}
-              <tr class:overdue={p.overdue} class:paid={p.paid}>
-                <td class="merchant">
-                  <span class="name">{p.name}</span>
-                  <span class="tags">
-                    {#if p.synced_from}<span class="tag synced" title="Read from the biller's site">portal</span>{/if}
-                    {#if p.source === "card"}<span class="tag">card</span>{/if}
-                    {#if p.source === "recurring"}<span class="tag" title="Detected by Plaid from past payments">detected</span>{/if}
-                    {#if p.source === "recurring"}
-                      {#if p.pay_from_name}<span class="tag" title="Plaid saw it paid from this account">{p.pay_from === "card" ? "on" : "from"} {p.pay_from_name}</span>{/if}
-                    {:else if accounts.length}
-                      <select
-                        class="payfrom"
-                        class:set={p.pay_from_account_id}
-                        title="Which account this is paid from"
-                        value={p.pay_from_account_id ?? ""}
-                        onchange={(e) => setPayFrom(p, e.currentTarget.value)}
-                      >
-                        <option value="">from checking</option>
-                        {#each payFromOptions(p) as a (a.account_id)}
-                          <option value={a.account_id}>{a.type === "credit" ? "on" : "from"} {accountName(a)}</option>
-                        {/each}
-                      </select>
-                    {/if}
-                    {#if p.autopay}<span class="tag">autopay</span>{/if}
-                    {#if p.statement_balance != null && Number(p.statement_balance) > 0}
-                      <span class="hint">statement {fmtMoney(p.statement_balance)}</span>
-                    {/if}
-                  </span>
-                </td>
-                <td class="num amt">
-                  {p.amount != null ? fmtMoney(p.amount) : "varies"}
-                  {#if p.amount_basis}<span class="basis">{p.amount_basis === "minimum" ? "min" : "avg"}</span>{/if}
-                </td>
-                <td class="when">
-                  <span>{fmtDate(p.due_date)}{#if p.estimated}<span class="basis" title="Projected, not stated by the biller"> est.</span>{/if}</span>
-                  <span class="rel">{p.paid ? "paid" : relative(p.due_date)}</span>
-                </td>
-                <td class="act">
-                  {#if p.source === "bill" && !p.autopay && !p.synced_from}
-                    <button class="small" onclick={() => act(() => api.markBillPaid(p.ref_id))}>
-                      Paid
-                    </button>
-                  {:else if p.source === "recurring"}
-                    <button
-                      class="small ghost"
-                      title="Hide this detected payment from the timeline"
-                      onclick={() => act(() => api.setStreamHidden(p.ref_id, true))}
-                    >
-                      Hide
-                    </button>
-                  {/if}
-                </td>
-              </tr>
-            {/if}
-          {/each}
-        </tbody>
-      </table>
-    </div>
-  </section>
+<Ledger {ledger} {accounts} bind:days horizons={HORIZONS} onAct={act} />
 
-  <section class="panel">
-    <div class="head"><h2>Debt</h2></div>
-    {#if debts && !debts.debts.length}
-      <p class="empty">No credit cards, loans or bills with a balance yet.</p>
-    {/if}
-    <ul class="debts">
-      {#each debts?.debts ?? [] as d (d.source + d.ref_id)}
-        {@const util = utilization(d)}
-        <li>
-          <div class="row">
-            {#if renaming === d.ref_id}
-              <input
-                class="rename"
-                bind:value={renameDraft}
-                placeholder="Nickname, blank to reset"
-                use:focus
-                onkeydown={(e) => {
-                  if (e.key === "Enter") finishRename(true);
-                  if (e.key === "Escape") finishRename(false);
-                }}
-                onblur={() => finishRename(true)}
-              />
-            {:else}
-              <span class="name">
-                {d.name}
-                {#if d.source === "plaid"}
-                  <button class="icon" title="Rename" onclick={() => startRename(d)}>✎</button>
-                {/if}
-                {#if d.is_overdue}<span class="tag danger">overdue</span>{/if}
-              </span>
-            {/if}
-            <span class="bal">{fmtMoney(d.balance)}</span>
-          </div>
-          <div class="meta">
-            <span>{d.institution ?? "manual"}</span>
-            {#if d.apr != null}<span>{Number(d.apr).toFixed(2)}% APR</span>{/if}
-            {#if d.minimum_payment != null}<span>{fmtMoney(d.minimum_payment)} min</span>{/if}
-            {#if d.next_due_date}<span>due {fmtDate(d.next_due_date)}</span>{/if}
-          </div>
-          {#if util != null}
-            <div class="bar" title="{util.toFixed(0)}% of {fmtMoney(d.credit_limit)} limit">
-              <div class="fill" class:high={util > 30} style="width: {util}%"></div>
-            </div>
-          {/if}
-        </li>
-      {/each}
-    </ul>
-  </section>
-</div>
+<Debts {debts} onAct={act} onEditBill={editBill} />
 
 <section class="panel">
   <div class="head">
@@ -641,48 +388,6 @@
       align-items: flex-start;
     }
   }
-  .scroll {
-    overflow-x: auto;
-  }
-  table.upcoming td {
-    vertical-align: middle;
-  }
-  table.upcoming .when span {
-    white-space: nowrap;
-  }
-  table.upcoming tr.paid {
-    opacity: 0.5;
-  }
-  table.upcoming tr.overdue .when,
-  table.upcoming tr.overdue .rel {
-    color: var(--danger);
-  }
-  tr.payday td {
-    background: var(--gold-dim);
-    color: var(--gold);
-    font-size: 0.85rem;
-  }
-  tr.transfer .amt {
-    color: var(--accent);
-  }
-  tr.payday td span + span {
-    margin-left: 0.6rem;
-  }
-  .merchant .tags {
-    margin-left: 0.4rem;
-  }
-  select.payfrom {
-    font-size: 0.7rem;
-    color: var(--muted);
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 0 0.2rem;
-    max-width: 12rem;
-  }
-  select.payfrom.set {
-    color: var(--text);
-  }
   .funding {
     display: flex;
     flex-wrap: wrap;
@@ -750,17 +455,6 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .columns {
-    display: grid;
-    grid-template-columns: 3fr 2fr;
-    gap: 1rem;
-    margin-bottom: 1rem;
-  }
-  @media (max-width: 820px) {
-    .columns {
-      grid-template-columns: 1fr;
-    }
-  }
   .panel {
     background: var(--panel);
     border: 1px solid var(--border);
@@ -783,23 +477,9 @@
     margin: 0;
     padding: 0;
   }
-  .when {
-    display: flex;
-    flex-direction: column;
-    font-size: 0.88rem;
-  }
   .rel {
     color: var(--muted);
     font-size: 0.76rem;
-  }
-  .name {
-    overflow-wrap: break-word;
-  }
-  .tags {
-    display: inline-flex;
-    flex-wrap: wrap;
-    gap: 0.3rem;
-    margin-left: 0.3rem;
   }
   .tag {
     font-size: 0.7rem;
@@ -809,13 +489,6 @@
     padding: 0 0.3rem;
     margin-left: 0.3rem;
   }
-  .tags .tag {
-    margin-left: 0;
-  }
-  .tag.danger {
-    color: var(--danger);
-    border-color: var(--danger);
-  }
   .hint {
     color: var(--muted);
     font-size: 0.78rem;
@@ -823,8 +496,6 @@
   p.hint {
     margin: -0.2rem 0 0.8rem;
   }
-  .amt,
-  .bal,
   .num {
     text-align: right;
     font-variant-numeric: tabular-nums;
@@ -835,9 +506,6 @@
     font-size: 0.72rem;
     margin-left: 0.2rem;
   }
-  .act {
-    text-align: right;
-  }
   button.small {
     padding: 0.2rem 0.55rem;
     font-size: 0.8rem;
@@ -845,28 +513,6 @@
   button.danger {
     color: var(--danger);
     border-color: var(--danger);
-  }
-  button.ghost {
-    background: transparent;
-    color: var(--muted);
-  }
-  button.ghost:hover {
-    color: var(--text);
-  }
-  button.icon {
-    background: none;
-    border: none;
-    padding: 0 0.25rem;
-    color: var(--muted);
-    font-size: 0.85rem;
-  }
-  button.icon:hover {
-    color: var(--accent);
-  }
-  input.rename {
-    flex: 1;
-    min-width: 0;
-    padding: 0.2rem 0.45rem;
   }
   .hidden-panel {
     margin-top: 1rem;
@@ -897,40 +543,6 @@
     color: var(--muted);
     font-size: 0.82rem;
     white-space: nowrap;
-  }
-  .debts li {
-    padding: 0.55rem 0;
-    border-bottom: 1px solid var(--panel-2);
-  }
-  .row {
-    display: flex;
-    justify-content: space-between;
-    gap: 0.5rem;
-  }
-  .bal {
-    font-weight: 600;
-  }
-  .meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.25rem 0.8rem;
-    color: var(--muted);
-    font-size: 0.78rem;
-    margin-top: 0.2rem;
-  }
-  .bar {
-    height: 4px;
-    background: var(--panel-2);
-    border-radius: 2px;
-    margin-top: 0.45rem;
-    overflow: hidden;
-  }
-  .fill {
-    height: 100%;
-    background: var(--accent);
-  }
-  .fill.high {
-    background: var(--warn);
   }
   table {
     width: 100%;

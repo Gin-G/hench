@@ -19,11 +19,13 @@ from ..schemas import (
     BillOut,
     BillUpdate,
     DebtsResponse,
+    LedgerResponse,
     MarkPaidRequest,
     PlanResponse,
     UpcomingResponse,
 )
 from ..services.bills import build_debts, build_upcoming, effective_due
+from ..services.ledger import build_ledger
 from ..services.plan import build_plan
 from ..services.schedule import advance
 
@@ -92,7 +94,9 @@ async def update_bill(
     bill = await _get_bill(session, bill_id)
     changes = body.model_dump(exclude_unset=True)
     # Required columns cannot be cleared, only changed.
-    for field in ("name", "frequency", "next_due_date", "autopay", "active"):
+    for field in (
+        "name", "frequency", "next_due_date", "autopay", "active", "promo_deferred_interest"
+    ):
         if field in changes and changes[field] is None:
             raise HTTPException(status_code=422, detail=f"{field} cannot be null")
     if "pay_from_account_id" in changes:
@@ -158,9 +162,23 @@ async def upcoming(
     return await build_upcoming(session, date.today(), days)
 
 
+@router.get("/ledger", response_model=LedgerResponse)
+async def ledger(
+    days: int = Query(30, ge=1, le=366),
+    session: AsyncSession = Depends(get_session),
+) -> LedgerResponse:
+    """The upcoming timeline with every account's running balance.
+
+    Each row carries the balance of the account it is paid from (or charged
+    to) straight after it, and of the card, loan or bank account it reaches.
+    """
+    return await build_ledger(session, date.today(), days)
+
+
 @router.get("/debts", response_model=DebtsResponse)
 async def debts(session: AsyncSession = Depends(get_session)) -> DebtsResponse:
-    """Plaid credit and loan accounts, plus bills carrying a balance."""
+    """Plaid credit and loan accounts, plus bills carrying a balance, highest
+    current rate first, with the one to target named."""
     return await build_debts(session, date.today())
 
 
