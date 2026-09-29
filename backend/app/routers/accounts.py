@@ -1,9 +1,9 @@
 """Accounts with balances, and the recurring streams behind bills and paydays.
 
 These are the read side of what services.enrich snapshots during sync, plus
-the two edits the user makes on top of Plaid's data: account nicknames and
-hiding a detected stream. Sync never writes either. Combining them into a
-dated timeline is services.bills' job, not this router's.
+the edits the user makes on top of Plaid's data: account nicknames, which
+bank account pays a card or loan, and hiding a detected stream. Sync never
+writes any of them. Combining them into a dated timeline is services.bills' job, not this router's.
 """
 from __future__ import annotations
 
@@ -66,7 +66,10 @@ async def update_account(
     body: AccountUpdate,
     session: AsyncSession = Depends(get_session),
 ) -> AccountOut:
-    """Rename an account. Only the nickname is editable; the rest is Plaid's."""
+    """Rename an account, or pick the bank account a card or loan is paid from.
+
+    Those are the only edits; the rest is Plaid's.
+    """
     row = (
         await session.execute(
             select(Account, Item.institution_name)
@@ -78,7 +81,22 @@ async def update_account(
     if row is None:
         raise HTTPException(status_code=404, detail="Account not found")
     account, institution_name = row
-    account.nickname = (body.nickname or "").strip() or None
+    changes = body.model_dump(exclude_unset=True)
+    if "nickname" in changes:
+        account.nickname = (body.nickname or "").strip() or None
+    if "pay_from_account_id" in changes:
+        source_id = body.pay_from_account_id
+        if source_id is not None:
+            if account.type not in ("credit", "loan"):
+                raise HTTPException(
+                    status_code=422, detail="Only a card or loan is paid from another account"
+                )
+            source = await session.get(Account, source_id)
+            if source is None or source.type != "depository":
+                raise HTTPException(
+                    status_code=422, detail="Pay from must be a linked bank account"
+                )
+        account.pay_from_account_id = source_id
     await session.flush()
     return _account_out(account, institution_name)
 

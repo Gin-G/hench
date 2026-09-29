@@ -47,6 +47,24 @@ def account_label(account: Account) -> str:
     return f"{name} ••{account.mask}" if account.mask else name
 
 
+def pay_from(
+    account_id: str | None, accounts: dict[str, Account]
+) -> dict[str, str | None]:
+    """Where a payment's money leaves, as UpcomingPayment fields.
+
+    A credit card makes it a card charge, paid through that card's own
+    payment. Anything else, or no account at all, is cash on the due date.
+    """
+    account = accounts.get(account_id) if account_id else None
+    if account is None:
+        return {"pay_from": "cash", "pay_from_account_id": None, "pay_from_name": None}
+    return {
+        "pay_from": "card" if account.type == "credit" else "cash",
+        "pay_from_account_id": account.account_id,
+        "pay_from_name": account_label(account),
+    }
+
+
 def effective_due(bill: Bill, today: date) -> date:
     """The due date a bill should be shown with.
 
@@ -60,7 +78,9 @@ def effective_due(bill: Bill, today: date) -> date:
     return bill.next_due_date
 
 
-def _bill_payments(bills: list[Bill], today: date, end: date) -> list[UpcomingPayment]:
+def _bill_payments(
+    bills: list[Bill], accounts: dict[str, Account], today: date, end: date
+) -> list[UpcomingPayment]:
     payments = []
     for bill in bills:
         for due in occurrences(
@@ -83,16 +103,17 @@ def _bill_payments(bills: list[Bill], today: date, end: date) -> list[UpcomingPa
                     estimated=bill.due_date_estimated
                     or (bill.source is not None and due != bill.next_due_date),
                     synced_from=bill.source,
+                    **pay_from(bill.pay_from_account_id, accounts),
                 )
             )
     return payments
 
 
 def _card_payments(
-    accounts: list[Account], today: date, end: date
+    accounts: dict[str, Account], today: date, end: date
 ) -> list[UpcomingPayment]:
     payments = []
-    for account in accounts:
+    for account in accounts.values():
         liability = account.liability
         if liability is None or liability.next_payment_due_date is None:
             continue
@@ -121,6 +142,7 @@ def _card_payments(
                 overdue=bool(liability.is_overdue),
                 paid=paid,
                 account=account.item.institution_name,
+                **pay_from(account.pay_from_account_id, accounts),
             )
         )
     return payments
@@ -159,12 +181,8 @@ def _stream_payments(
                         else None
                     ),
                     estimated=True,
-                    pay_from=(
-                        "card"
-                        if stream.account_id in accounts
-                        and accounts[stream.account_id].type == "credit"
-                        else "cash"
-                    ),
+                    # Plaid saw it leave this account, so that is what pays it.
+                    **pay_from(stream.account_id, accounts),
                 )
             )
     return payments
@@ -210,8 +228,8 @@ async def build_upcoming(
     by_id = {a.account_id: a for a in accounts}
 
     payments = (
-        _bill_payments(bills, today, end)
-        + _card_payments(accounts, today, end)
+        _bill_payments(bills, by_id, today, end)
+        + _card_payments(by_id, today, end)
         + _stream_payments(streams, by_id, today, end)
     )
     payments.sort(key=lambda p: (p.due_date, p.name.lower()))

@@ -72,10 +72,17 @@ export const api = {
   disconnectGoogle: () => req("/oauth/google", { method: "DELETE" }),
   // A full-page navigation, not a fetch: it redirects out to Google.
   googleConnectUrl: `${BASE}/oauth/google/start`,
+  accounts: () => req("/accounts"),
   renameAccount: (accountId, nickname) =>
     req(`/accounts/${encodeURIComponent(accountId)}`, {
       method: "PATCH",
       body: JSON.stringify({ nickname }),
+    }),
+  // Which bank account a card or loan is paid from; null for checking.
+  setAccountPayFrom: (accountId, payFromAccountId) =>
+    req(`/accounts/${encodeURIComponent(accountId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ pay_from_account_id: payFromAccountId }),
     }),
   hiddenStreams: () =>
     req("/recurring?direction=outflow&include_hidden=true").then((streams) =>

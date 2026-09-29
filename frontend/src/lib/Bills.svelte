@@ -19,6 +19,7 @@
   let gmail = $state(null);
   let confirmDisconnect = $state(false);
   let bills = $state([]);
+  let accounts = $state([]);
   let error = $state(null);
   // null = closed, "new" = adding, or the bill being edited.
   let editing = $state(null);
@@ -34,13 +35,14 @@
   async function load() {
     error = null;
     try {
-      [upcoming, debts, bills, hidden, plan, gmail] = await Promise.all([
+      [upcoming, debts, bills, hidden, plan, gmail, accounts] = await Promise.all([
         api.upcoming(days),
         api.debts(),
         api.bills(),
         api.hiddenStreams(),
         api.plan(),
         api.googleStatus(),
+        api.accounts(),
       ]);
     } catch (e) {
       error = String(e);
@@ -80,6 +82,31 @@
     }
     confirmDelete = null;
     act(() => api.deleteBill(bill.id));
+  }
+
+  // Where a payment can be drawn from, besides checking (the default): other
+  // bank accounts, and for a bill, a credit card it is charged to.
+  function payFromOptions(p) {
+    return accounts.filter(
+      (a) =>
+        (a.type === "depository" && a.subtype !== "checking") ||
+        (p.source === "bill" && a.type === "credit") ||
+        a.account_id === p.pay_from_account_id
+    );
+  }
+
+  function accountName(a) {
+    const name = a.nickname || a.name || a.official_name || "Account";
+    return a.nickname || !a.mask ? name : `${name} ••${a.mask}`;
+  }
+
+  function setPayFrom(p, value) {
+    const id = value || null;
+    act(() =>
+      p.source === "bill"
+        ? api.updateBill(p.ref_id, { pay_from_account_id: id })
+        : api.setAccountPayFrom(p.ref_id, id)
+    );
   }
 
   function startRename(d) {
@@ -208,12 +235,31 @@
         <span class="value">{fmtMoney(plan.safe_extra)}</span>
         <span class="sub">
           The lowest checking gets through {fmtDate(plan.horizon)}, on {fmtDate(plan.low_point_date)}, counting every bill and paycheck.
+          {#if Number(plan.safe_extra) < Number(plan.low_point)}
+            Less {fmtMoney(Number(plan.low_point) - Number(plan.safe_extra))} to cover the shortfall below.
+          {/if}
           {#if plan.target_debt}
             Best spent on <strong>{plan.target_debt.name}</strong>, {Number(plan.target_debt.apr).toFixed(2)}% APR on {fmtMoney(plan.target_debt.balance)}.
           {/if}
         </span>
       {/if}
     </div>
+    {#each plan.funding_accounts as f (f.account_id)}
+      {@const short = Number(f.low_point) < 0}
+      <div class="funding" class:short>
+        <span class="fname">{f.name}</span>
+        <span>{fmtMoney(f.available)} now</span>
+        <span>
+          {fmtMoney(f.due_total)} due by {fmtDate(plan.horizon)}
+          ({f.due_count} {f.due_count === 1 ? "payment" : "payments"})
+        </span>
+        {#if short}
+          <strong>Short {fmtMoney(-Number(f.low_point))} on {fmtDate(f.low_point_date)}: move it over before then</strong>
+        {:else}
+          <span>lowest {fmtMoney(f.low_point)}, {fmtDate(f.low_point_date)}</span>
+        {/if}
+      </div>
+    {/each}
   </section>
 {/if}
 
@@ -282,7 +328,22 @@
                     {#if p.synced_from}<span class="tag synced" title="Read from the biller's site">portal</span>{/if}
                     {#if p.source === "card"}<span class="tag">card</span>{/if}
                     {#if p.source === "recurring"}<span class="tag" title="Detected by Plaid from past payments">detected</span>{/if}
-                    {#if p.pay_from === "card"}<span class="tag" title="Charged to a credit card, so paid through that card's payment">on card</span>{/if}
+                    {#if p.source === "recurring"}
+                      {#if p.pay_from_name}<span class="tag" title="Plaid saw it paid from this account">{p.pay_from === "card" ? "on" : "from"} {p.pay_from_name}</span>{/if}
+                    {:else if accounts.length}
+                      <select
+                        class="payfrom"
+                        class:set={p.pay_from_account_id}
+                        title="Which account this is paid from"
+                        value={p.pay_from_account_id ?? ""}
+                        onchange={(e) => setPayFrom(p, e.currentTarget.value)}
+                      >
+                        <option value="">from checking</option>
+                        {#each payFromOptions(p) as a (a.account_id)}
+                          <option value={a.account_id}>{a.type === "credit" ? "on" : "from"} {accountName(a)}</option>
+                        {/each}
+                      </select>
+                    {/if}
                     {#if p.autopay}<span class="tag">autopay</span>{/if}
                     {#if p.statement_balance != null && Number(p.statement_balance) > 0}
                       <span class="hint">statement {fmtMoney(p.statement_balance)}</span>
@@ -578,6 +639,39 @@
   }
   .merchant .tags {
     margin-left: 0.4rem;
+  }
+  select.payfrom {
+    font-size: 0.7rem;
+    color: var(--muted);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0 0.2rem;
+    max-width: 12rem;
+  }
+  select.payfrom.set {
+    color: var(--text);
+  }
+  .funding {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.2rem 1rem;
+    margin-top: 0.6rem;
+    padding: 0.5rem 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  .funding .fname {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .funding.short {
+    border-color: var(--danger);
+  }
+  .funding.short strong {
+    color: var(--danger);
   }
   .tag.synced {
     color: var(--accent);

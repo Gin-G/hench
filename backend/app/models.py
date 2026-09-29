@@ -79,6 +79,11 @@ class Account(Base):
     # sends "CREDIT CARD" for all of them), so this wins over name when shown.
     # Sync never writes it.
     nickname: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Credit and loan accounts: the bank account their payment is drawn from,
+    # set from the UI. Null means checking. Sync never writes it.
+    pay_from_account_id: Mapped[str | None] = mapped_column(
+        ForeignKey("accounts.account_id", ondelete="SET NULL"), nullable=True
+    )
 
     # --- Balances, refreshed from /accounts/balance/get on each sync --------
     # Plaid's sign convention differs by account type: for depository accounts
@@ -335,6 +340,11 @@ class Bill(Base):
     autopay: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     category: Mapped[str | None] = mapped_column(String, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The account it is paid from: a bank account, or a credit card when the
+    # bill is charged to one. Null means checking.
+    pay_from_account_id: Mapped[str | None] = mapped_column(
+        ForeignKey("accounts.account_id", ondelete="SET NULL"), nullable=True
+    )
 
     # --- Debt, when the bill is paying something down ----------------------
     # Outstanding balance, positive = owed. Edited by hand; marking a payment

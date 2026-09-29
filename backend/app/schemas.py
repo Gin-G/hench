@@ -82,6 +82,7 @@ class AccountOut(BaseModel):
     iso_currency_code: str | None = None
     balances_updated_at: datetime | None = None
     institution_name: str | None = None
+    pay_from_account_id: str | None = None
     liability: LiabilityOut | None = None
 
 
@@ -107,8 +108,13 @@ class RecurringStreamOut(BaseModel):
 
 
 class AccountUpdate(BaseModel):
+    """Partial update: only the fields sent are changed."""
+
     # Blank or null clears the nickname back to the institution's name.
     nickname: str | None = None
+    # Credit and loan accounts only: the bank account that pays them. Null
+    # goes back to checking.
+    pay_from_account_id: str | None = None
 
 
 class RecurringStreamUpdate(BaseModel):
@@ -128,6 +134,7 @@ class BillIn(BaseModel):
     autopay: bool = False
     category: str | None = None
     notes: str | None = None
+    pay_from_account_id: str | None = None
     balance: Decimal | None = Field(default=None, ge=0)
     apr: Decimal | None = Field(default=None, ge=0, le=100)
     active: bool = True
@@ -145,6 +152,7 @@ class BillUpdate(BaseModel):
     autopay: bool | None = None
     category: str | None = None
     notes: str | None = None
+    pay_from_account_id: str | None = None
     balance: Decimal | None = Field(default=None, ge=0)
     apr: Decimal | None = Field(default=None, ge=0, le=100)
     active: bool | None = None
@@ -161,6 +169,7 @@ class BillOut(BaseModel):
     autopay: bool
     category: str | None
     notes: str | None
+    pay_from_account_id: str | None = None
     balance: Decimal | None
     apr: Decimal | None
     last_paid_date: date | None
@@ -203,6 +212,10 @@ class UpcomingPayment(BaseModel):
     # "cash" leaves a bank account on the due date; "card" is charged to a
     # credit card and so is paid through that card's own payment.
     pay_from: Literal["cash", "card"] = "cash"
+    # The account the money leaves: the stream's own account for a detected
+    # payment, the user's choice for a bill or a card. Null means checking.
+    pay_from_account_id: str | None = None
+    pay_from_name: str | None = None
     # Set for a bill kept up to date by sync, e.g. "longmont".
     synced_from: str | None = None
 
@@ -250,6 +263,25 @@ class Paycheck(BaseModel):
     date: date
     amount: Decimal
     account: str | None = None
+    account_id: str | None = None
+
+
+class FundingAccount(BaseModel):
+    """A bank account other than checking that pays some of the bills.
+
+    Projected on its own: a mortgage drawn from savings is covered by
+    savings, not checking. Money already sitting in it is not counted as
+    spare for debt — only a shortfall carries over, as a transfer checking
+    has to make.
+    """
+
+    account_id: str
+    name: str
+    available: Decimal
+    due_total: Decimal
+    due_count: int
+    low_point: Decimal
+    low_point_date: date
 
 
 class PlanResponse(BaseModel):
@@ -276,6 +308,10 @@ class PlanResponse(BaseModel):
     low_point: Decimal
     low_point_date: date
     safe_extra: Decimal
+    # Savings and other bank accounts that bills are drawn from, each
+    # projected over the same lookahead. A negative low point there is money
+    # checking must move over, and comes out of safe_extra.
+    funding_accounts: list[FundingAccount] = []
     # Highest-APR debt with a balance: where extra money does the most.
     target_debt: DebtOut | None
 
