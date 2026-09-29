@@ -264,6 +264,7 @@ class Paycheck(BaseModel):
     amount: Decimal
     account: str | None = None
     account_id: str | None = None
+    stream_id: str | None = None
 
 
 class FundingAccount(BaseModel):
@@ -293,6 +294,9 @@ class PlanResponse(BaseModel):
     next_paycheck: Paycheck | None
     # Every projected paycheck over the next few weeks, for marking paydays.
     paychecks: list[Paycheck]
+    # Recurring transfers into a bank account over the same weeks, from
+    # another of the user's accounts or from outside (e.g. Venmo).
+    transfers_in: list[Paycheck] = []
     # Payments due on or before this date are counted: the next payday, or a
     # fortnight out when no paycheck has been detected.
     until: date
