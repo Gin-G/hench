@@ -13,7 +13,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_session
-from ..models import Bill
+from ..models import Account, Bill
 from ..schemas import (
     BillIn,
     BillOut,
@@ -35,6 +35,17 @@ async def _get_bill(session: AsyncSession, bill_id: int) -> Bill:
     if bill is None:
         raise HTTPException(status_code=404, detail="Bill not found")
     return bill
+
+
+async def _check_pay_from(session: AsyncSession, account_id: str | None) -> None:
+    # A bill leaves a bank account, or is charged to a card.
+    if account_id is None:
+        return
+    account = await session.get(Account, account_id)
+    if account is None or account.type not in ("depository", "credit"):
+        raise HTTPException(
+            status_code=422, detail="Pay from must be a linked bank account or card"
+        )
 
 
 @router.get("/bills", response_model=list[BillOut])
@@ -66,6 +77,7 @@ async def list_bills(
 async def create_bill(
     body: BillIn, session: AsyncSession = Depends(get_session)
 ) -> Bill:
+    await _check_pay_from(session, body.pay_from_account_id)
     bill = Bill(**body.model_dump(), due_day=body.next_due_date.day)
     session.add(bill)
     await session.flush()
@@ -83,6 +95,8 @@ async def update_bill(
     for field in ("name", "frequency", "next_due_date", "autopay", "active"):
         if field in changes and changes[field] is None:
             raise HTTPException(status_code=422, detail=f"{field} cannot be null")
+    if "pay_from_account_id" in changes:
+        await _check_pay_from(session, changes["pay_from_account_id"])
     for field, value in changes.items():
         setattr(bill, field, value)
     if "next_due_date" in changes:

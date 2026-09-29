@@ -1,8 +1,8 @@
 """What is left until the next paycheck, and where the extra should go.
 
     cash in checking
-  - every payment due on or before the next paycheck that leaves a bank
-    account (bills, card minimums, detected outflows paid from checking)
+  - every payment due from checking on or before the next paycheck (bills,
+    card minimums, detected outflows)
   = left over
 
 Detected payments charged to a credit card are left out of the sum: they are
@@ -16,6 +16,12 @@ point*: the lowest the checking balance is projected to reach over the next
 ``_LOOKAHEAD_DAYS``, walking every bill and paycheck in date order. Paying that
 much extra today still leaves every later bill covered.
 
+Payments are charged to the account they are drawn from. Detected payments
+use the account Plaid saw them leave; bills and card or loan payments use the
+account picked for them in the UI, defaulting to checking. Checking accounts
+are pooled; a savings account paying the mortgage is projected on its own, and
+only its shortfall, if any, comes out of what checking can spare.
+
 Paydays come from Plaid's recurring inflow streams. Payments due *on* a payday
 are counted before that day's paycheck, since a deposit landing that morning
 is not a safe thing to lean on.
@@ -23,12 +29,19 @@ is not a safe thing to lean on.
 from __future__ import annotations
 
 from datetime import date, timedelta
+from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Account, RecurringStream
-from ..schemas import CashAccount, Paycheck, PlanResponse
+from ..schemas import (
+    CashAccount,
+    FundingAccount,
+    Paycheck,
+    PlanResponse,
+    UpcomingPayment,
+)
 from .bills import ZERO, account_label, build_debts, build_upcoming, clean_name
 from .schedule import PLAID_FREQUENCIES, occurrences
 
@@ -79,31 +92,66 @@ async def _paychecks(
                     # Inflows arrive negative under Plaid's sign convention.
                     amount=abs(stream.average_amount),
                     account=account_label(account) if account else None,
+                    account_id=stream.account_id,
                 )
             )
     return sorted(paychecks, key=lambda p: p.date)
+
+
+def _low_point(
+    start: Decimal,
+    outflows: list[UpcomingPayment],
+    paychecks: list[Paycheck],
+    today: date,
+    horizon: date,
+) -> tuple[Decimal, date]:
+    """Walk the lookahead in date order, bills before paychecks on the same
+    day, and return the lowest balance reached and when."""
+    events = [(p.due_date, 0, -p.amount) for p in outflows if p.due_date <= horizon]
+    events += [(c.date, 1, c.amount) for c in paychecks if c.date <= horizon]
+    running = low = start
+    low_date = today
+    for on, _, delta in sorted(events, key=lambda e: (e[0], e[1])):
+        running += delta
+        if running < low:
+            low, low_date = running, on
+    return low, low_date
+
+
+def _balance(account: Account) -> Decimal | None:
+    # Available, not current: a pending debit is already spoken for.
+    if account.available_balance is not None:
+        return account.available_balance
+    return account.current_balance
 
 
 async def build_plan(session: AsyncSession, today: date) -> PlanResponse:
     accounts = {
         a.account_id: a for a in (await session.scalars(select(Account))).all()
     }
-    cash = [
-        CashAccount(
-            account_id=a.account_id,
-            name=account_label(a),
-            # Available, not current: a pending debit is already spoken for.
-            available=a.available_balance if a.available_balance is not None else a.current_balance,
-        )
+    banked = {
+        a.account_id: a
         for a in accounts.values()
-        if a.type == "depository"
-        and a.subtype == "checking"
-        and (a.available_balance is not None or a.current_balance is not None)
+        if a.type == "depository" and _balance(a) is not None
+    }
+    # Every checking account is pooled as one: that is where spending and
+    # extra debt payments come from. Savings and the like each stand alone.
+    cash = [
+        CashAccount(account_id=a.account_id, name=account_label(a), available=_balance(a))
+        for a in banked.values()
+        if a.subtype == "checking"
     ]
+    others = {i: a for i, a in banked.items() if a.subtype != "checking"}
     cash_total = sum((c.available for c in cash), ZERO)
 
+    def pool_of(account_id: str | None) -> str | None:
+        # None is checking: unassigned payments, checking itself, and any
+        # account without a balance to project.
+        return account_id if account_id in others else None
+
     paychecks = await _paychecks(session, accounts, today)
-    next_paycheck = paychecks[0] if paychecks else None
+    checking_paychecks = [c for c in paychecks if pool_of(c.account_id) is None]
+    next_paycheck = checking_paychecks[0] if checking_paychecks else None
     # Without a known payday, fall back to a fortnight — about the longest
     # gap between the biweekly paychecks this is built around.
     until = next_paycheck.date if next_paycheck else today + timedelta(days=14)
@@ -112,28 +160,47 @@ async def build_plan(session: AsyncSession, today: date) -> PlanResponse:
     upcoming = await build_upcoming(
         session, today, (max(until, horizon) - today).days
     )
-    outflows = [
-        p
-        for p in upcoming.payments
-        if p.pay_from == "cash" and not p.paid and p.amount is not None
-    ]
+    unpaid = [p for p in upcoming.payments if p.pay_from == "cash" and not p.paid]
+    outflows = [p for p in unpaid if p.amount is not None]
     due = [
         p
-        for p in upcoming.payments
-        if p.pay_from == "cash" and not p.paid and p.due_date <= until
+        for p in unpaid
+        if p.due_date <= until and pool_of(p.pay_from_account_id) is None
     ]
     due_total = sum((p.amount for p in due if p.amount is not None), ZERO)
 
-    # Walk the lookahead in date order, bills before paychecks on the same
-    # day, tracking the lowest balance reached.
-    events = [(p.due_date, 0, -p.amount) for p in outflows if p.due_date <= horizon]
-    events += [(c.date, 1, c.amount) for c in paychecks if c.date <= horizon]
-    running = low = cash_total
-    low_date = today
-    for on, _, delta in sorted(events, key=lambda e: (e[0], e[1])):
-        running += delta
-        if running < low:
-            low, low_date = running, on
+    low, low_date = _low_point(
+        cash_total,
+        [p for p in outflows if pool_of(p.pay_from_account_id) is None],
+        checking_paychecks,
+        today,
+        horizon,
+    )
+
+    funding = []
+    for account_id, account in others.items():
+        drawn = [p for p in outflows if p.pay_from_account_id == account_id]
+        paid_in = [c for c in paychecks if c.account_id == account_id]
+        if not drawn and not paid_in:
+            continue
+        in_window = [p for p in drawn if p.due_date <= horizon]
+        a_low, a_low_date = _low_point(
+            _balance(account), drawn, paid_in, today, horizon
+        )
+        funding.append(
+            FundingAccount(
+                account_id=account_id,
+                name=account_label(account),
+                available=_balance(account),
+                due_total=sum((p.amount for p in in_window), ZERO),
+                due_count=len(in_window),
+                low_point=a_low,
+                low_point_date=a_low_date,
+            )
+        )
+    # Whatever another account will come up short is a transfer checking has
+    # to make, so it is not spare.
+    shortfall = sum((-f.low_point for f in funding if f.low_point < 0), ZERO)
 
     debts = await build_debts(session, today)
     with_rate = [d for d in debts.debts if d.apr is not None and d.balance > 0]
@@ -153,6 +220,7 @@ async def build_plan(session: AsyncSession, today: date) -> PlanResponse:
         horizon=horizon,
         low_point=low,
         low_point_date=low_date,
-        safe_extra=max(low, ZERO),
+        safe_extra=max(low - shortfall, ZERO),
+        funding_accounts=funding,
         target_debt=target,
     )
