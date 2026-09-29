@@ -160,20 +160,24 @@
 
   const SOURCE_LABEL = { card: "card", recurring: "detected" };
 
-  // Payments in due-date order, with each payday in the window slotted in
+  // Payments in due-date order, with each payday and transfer in slotted in
   // ahead of the payments due that day or later.
   let rows = $derived.by(() => {
     if (!upcoming) return [];
-    const pays = (plan?.paychecks ?? []).filter((c) => c.date <= upcoming.end);
+    const inflows = [
+      ...(plan?.paychecks ?? []).map((c) => ({ ...c, kind: "payday" })),
+      ...(plan?.transfers_in ?? []).map((c) => ({ ...c, kind: "transfer" })),
+    ]
+      .filter((c) => c.date <= upcoming.end)
+      .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+    const inRow = (c) => ({ key: `${c.kind}-${c.stream_id ?? c.name}-${c.date}`, inflow: c });
     const out = [];
     let i = 0;
     for (const p of upcoming.payments) {
-      while (i < pays.length && pays[i].date < p.due_date) {
-        out.push({ key: `pay-${pays[i].name}-${pays[i].date}`, payday: pays[i++] });
-      }
+      while (i < inflows.length && inflows[i].date < p.due_date) out.push(inRow(inflows[i++]));
       out.push({ key: `${p.source}-${p.ref_id}-${p.due_date}`, payment: p });
     }
-    while (i < pays.length) out.push({ key: `pay-${pays[i].name}-${pays[i].date}`, payday: pays[i++] });
+    while (i < inflows.length) out.push(inRow(inflows[i++]));
     return out;
   });
 
@@ -312,11 +316,35 @@
         </thead>
         <tbody>
           {#each rows as r (r.key)}
-            {#if r.payday}
+            {#if r.inflow?.kind === "payday"}
               <tr class="payday">
                 <td colspan="4">
-                  <span>💵 {r.payday.name} · ~{fmtMoney(r.payday.amount)}</span>
-                  <span class="rel">{fmtDate(r.payday.date)}</span>
+                  <span>💵 {r.inflow.name} · ~{fmtMoney(r.inflow.amount)}</span>
+                  <span class="rel">{fmtDate(r.inflow.date)}</span>
+                </td>
+              </tr>
+            {:else if r.inflow}
+              <tr class="transfer">
+                <td class="merchant">
+                  <span class="name">↘ {r.inflow.name}</span>
+                  <span class="tags">
+                    <span class="tag" title="Detected by Plaid from past transfers">transfer in</span>
+                    {#if r.inflow.account}<span class="tag">to {r.inflow.account}</span>{/if}
+                  </span>
+                </td>
+                <td class="num amt">+{fmtMoney(r.inflow.amount)}<span class="basis">avg</span></td>
+                <td class="when">
+                  <span>{fmtDate(r.inflow.date)}<span class="basis" title="Projected from past transfers"> est.</span></span>
+                  <span class="rel">{relative(r.inflow.date)}</span>
+                </td>
+                <td class="act">
+                  <button
+                    class="small ghost"
+                    title="Stop counting this detected transfer"
+                    onclick={() => act(() => api.setStreamHidden(r.inflow.stream_id, true))}
+                  >
+                    Hide
+                  </button>
                 </td>
               </tr>
             {:else}
@@ -528,7 +556,7 @@
 {#if hidden.length}
   <section class="panel hidden-panel">
     <button class="link" onclick={() => (showHidden = !showHidden)}>
-      {showHidden ? "▾" : "▸"} Hidden detected payments ({hidden.length})
+      {showHidden ? "▾" : "▸"} Hidden detected payments and transfers ({hidden.length})
     </button>
     {#if showHidden}
       <ul class="hidden-list">
@@ -536,7 +564,7 @@
           <li>
             <span>{h.merchant_name || h.description}</span>
             <span class="muted">
-              {h.average_amount != null ? fmtMoney(h.average_amount) : ""}
+              {h.average_amount != null ? (h.direction === "inflow" ? "+" : "") + fmtMoney(Math.abs(Number(h.average_amount))) : ""}
               {h.frequency ? h.frequency.toLowerCase().replace("_", "-") : ""}
             </span>
             <button class="small" onclick={() => act(() => api.setStreamHidden(h.stream_id, false))}>
@@ -633,6 +661,9 @@
     background: var(--gold-dim);
     color: var(--gold);
     font-size: 0.85rem;
+  }
+  tr.transfer .amt {
+    color: var(--accent);
   }
   tr.payday td span + span {
     margin-left: 0.6rem;

@@ -85,7 +85,7 @@ export const api = {
       body: JSON.stringify({ pay_from_account_id: payFromAccountId }),
     }),
   hiddenStreams: () =>
-    req("/recurring?direction=outflow&include_hidden=true").then((streams) =>
+    req("/recurring?include_hidden=true").then((streams) =>
       streams.filter((s) => s.hidden)
     ),
   setStreamHidden: (streamId, hidden) =>
