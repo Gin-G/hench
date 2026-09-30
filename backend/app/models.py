@@ -84,6 +84,20 @@ class Account(Base):
     pay_from_account_id: Mapped[str | None] = mapped_column(
         ForeignKey("accounts.account_id", ondelete="SET NULL"), nullable=True
     )
+    # Credit and loan accounts: the APR to use in place of Plaid's, for a loan
+    # Plaid reports no rate for, or a card whose rate it has wrong.
+    apr_override: Mapped[Decimal | None] = mapped_column(Rate, nullable=True)
+    # --- Promotional rate, entered by hand ---------------------------------
+    # Plaid reports APRs but not when a promo ends. While promo_ends_on has
+    # not passed, promo_apr applies to promo_balance (null = the whole
+    # balance). Deferred interest means the interest waived so far is charged
+    # back if the promo balance is not cleared by the end date.
+    promo_apr: Mapped[Decimal | None] = mapped_column(Rate, nullable=True)
+    promo_ends_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    promo_balance: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    promo_deferred_interest: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
 
     # --- Balances, refreshed from /accounts/balance/get on each sync --------
     # Plaid's sign convention differs by account type: for depository accounts
@@ -352,6 +366,13 @@ class Bill(Base):
     # interest the app does not know the lender charged.
     balance: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     apr: Mapped[Decimal | None] = mapped_column(Rate, nullable=True)
+    # Promotional rate, as on Account.
+    promo_apr: Mapped[Decimal | None] = mapped_column(Rate, nullable=True)
+    promo_ends_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    promo_balance: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    promo_deferred_interest: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
 
     last_paid_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     # True when next_due_date is a guess — the source did not state one, so it

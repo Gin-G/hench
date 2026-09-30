@@ -11,9 +11,10 @@ has to know where a payment came from to sort or total it.
 """
 from __future__ import annotations
 
+import math
 import re
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import ROUND_UP, Decimal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +28,7 @@ from .schedule import PLAID_FREQUENCIES, next_on_or_after, occurrences
 _DEBT_TYPES = {"credit", "loan"}
 
 ZERO = Decimal("0")
+CENT = Decimal("0.01")
 
 
 # ACH descriptions carry the originator's id after the name, e.g.
@@ -246,6 +248,85 @@ async def build_upcoming(
     return UpcomingResponse(start=today, end=end, payments=payments, total_due=total_due)
 
 
+def _months_left(today: date, ends: date) -> int:
+    # Payments left before the promo ends, one per month, at least one.
+    return max(1, math.ceil((ends - today).days / 30.4375))
+
+
+def _rates(
+    debt: DebtOut,
+    base_apr: Decimal | None,
+    promo_apr: Decimal | None,
+    promo_ends_on: date | None,
+    promo_balance: Decimal | None,
+    deferred: bool,
+    today: date,
+) -> DebtOut:
+    """Fill in the rate fields, working out what a promo means today."""
+    active = (
+        promo_apr is not None and promo_ends_on is not None and promo_ends_on >= today
+    )
+    update: dict = {
+        "base_apr": base_apr,
+        "apr": base_apr,
+        "promo_apr": promo_apr,
+        "promo_ends_on": promo_ends_on,
+        "promo_balance": promo_balance,
+        "promo_deferred_interest": deferred,
+        "promo_active": active,
+    }
+    if active and debt.balance > 0:
+        covered = min(promo_balance, debt.balance) if promo_balance is not None else debt.balance
+        # Payments above the minimum go to the highest-rate part of a balance
+        # first, so while any of it is outside the promo, that part is what
+        # an extra dollar pays down.
+        if covered >= debt.balance:
+            update["apr"] = promo_apr
+        needed = (covered / _months_left(today, promo_ends_on)).quantize(
+            CENT, rounding=ROUND_UP
+        )
+        update["promo_monthly_needed"] = needed
+        if debt.minimum_payment is not None:
+            update["promo_on_track"] = debt.minimum_payment >= needed
+    return debt.model_copy(update=update)
+
+
+def _target(debts: list[DebtOut]) -> tuple[DebtOut | None, str | None]:
+    """Where extra money should go now.
+
+    A deferred-interest promo the minimum will not clear in time comes first,
+    soonest end date first: missing it charges back every month of waived
+    interest at once. Otherwise the highest current rate, the smaller balance
+    on a tie since it clears sooner. A 0% promo sits low until it ends, then
+    ranks by its regular rate from that day.
+    """
+    owing = [d for d in debts if d.balance > 0]
+    at_risk = [
+        d
+        for d in owing
+        if d.promo_active and d.promo_deferred_interest and d.promo_on_track is not True
+    ]
+    if at_risk:
+        d = min(at_risk, key=lambda d: d.promo_ends_on)
+        return d, (
+            f"Deferred-interest promo ends {d.promo_ends_on:%b %-d, %Y}: "
+            f"${d.promo_monthly_needed:,.2f}/mo clears it in time"
+            + ("" if d.minimum_payment is None else f", the ${d.minimum_payment:,.2f} minimum does not")
+            + "."
+        )
+    rated = [d for d in owing if d.apr is not None and d.apr > 0]
+    if not rated:
+        return None, None
+    d = max(rated, key=lambda d: (d.apr, -d.balance))
+    reason = f"Highest rate right now, {d.apr:.2f}% APR."
+    if d.promo_active and d.apr != d.promo_apr:
+        reason += (
+            f" Part of it is on a {d.promo_apr:.2f}% promo; extra payments go to"
+            " the rest first."
+        )
+    return d, reason
+
+
 async def build_debts(session: AsyncSession, today: date) -> DebtsResponse:
     debts: list[DebtOut] = []
 
@@ -262,26 +343,37 @@ async def build_debts(session: AsyncSession, today: date) -> DebtsResponse:
         if account.current_balance is None:
             continue
         liability = account.liability
+        plaid_apr = (
+            (liability.purchase_apr or liability.interest_rate_percentage)
+            if liability
+            else None
+        )
+        debt = DebtOut(
+            source="plaid",
+            ref_id=account.account_id,
+            name=account_label(account),
+            institution=institution,
+            kind=liability.liability_type if liability else account.type,
+            balance=account.current_balance,
+            credit_limit=account.credit_limit,
+            apr_overridden=account.apr_override is not None,
+            plaid_aprs=(liability.aprs or []) if liability else [],
+            minimum_payment=liability.minimum_payment_amount if liability else None,
+            next_due_date=liability.next_payment_due_date if liability else None,
+            statement_balance=(
+                liability.last_statement_balance if liability else None
+            ),
+            is_overdue=bool(liability and liability.is_overdue),
+        )
         debts.append(
-            DebtOut(
-                source="plaid",
-                ref_id=account.account_id,
-                name=account_label(account),
-                institution=institution,
-                kind=liability.liability_type if liability else account.type,
-                balance=account.current_balance,
-                credit_limit=account.credit_limit,
-                apr=(
-                    (liability.purchase_apr or liability.interest_rate_percentage)
-                    if liability
-                    else None
-                ),
-                minimum_payment=liability.minimum_payment_amount if liability else None,
-                next_due_date=liability.next_payment_due_date if liability else None,
-                statement_balance=(
-                    liability.last_statement_balance if liability else None
-                ),
-                is_overdue=bool(liability and liability.is_overdue),
+            _rates(
+                debt,
+                account.apr_override if account.apr_override is not None else plaid_apr,
+                account.promo_apr,
+                account.promo_ends_on,
+                account.promo_balance,
+                account.promo_deferred_interest,
+                today,
             )
         )
 
@@ -291,25 +383,38 @@ async def build_debts(session: AsyncSession, today: date) -> DebtsResponse:
         )
     ).all()
     for bill in bills:
+        debt = DebtOut(
+            source="manual",
+            ref_id=str(bill.id),
+            name=bill.name,
+            kind="loan",
+            balance=bill.balance,
+            minimum_payment=bill.amount,
+            next_due_date=effective_due(bill, today),
+            is_overdue=not bill.autopay and bill.next_due_date < today,
+        )
         debts.append(
-            DebtOut(
-                source="manual",
-                ref_id=str(bill.id),
-                name=bill.name,
-                kind="loan",
-                balance=bill.balance,
-                apr=bill.apr,
-                minimum_payment=bill.amount,
-                next_due_date=effective_due(bill, today),
-                is_overdue=not bill.autopay and bill.next_due_date < today,
+            _rates(
+                debt,
+                bill.apr,
+                bill.promo_apr,
+                bill.promo_ends_on,
+                bill.promo_balance,
+                bill.promo_deferred_interest,
+                today,
             )
         )
 
-    debts.sort(key=lambda d: d.balance, reverse=True)
+    # Highest current rate first; unknown rates last, biggest balance first
+    # within a rate.
+    debts.sort(key=lambda d: (d.apr is None, -(d.apr or 0), -d.balance))
+    target, reason = _target(debts)
     return DebtsResponse(
         debts=debts,
         total_balance=sum((d.balance for d in debts), ZERO),
         total_minimum=sum(
             (d.minimum_payment for d in debts if d.minimum_payment is not None), ZERO
         ),
+        target=target,
+        target_reason=reason,
     )
