@@ -117,16 +117,17 @@
       <tbody>
         {#each ledger?.entries ?? [] as e, i (`${e.kind}-${e.payment?.source ?? ""}-${e.payment?.ref_id ?? e.inflow?.stream_id ?? e.name}-${e.date}-${i}`)}
           {@const p = e.payment}
-          <tr class:payday={e.kind === "paycheck"} class:inflow={e.kind !== "payment"} class:overdue={p?.overdue} class:paid={p?.paid}>
+          <tr class:payday={e.kind === "paycheck"} class:inflow={e.kind === "paycheck" || e.kind === "transfer"} class:earmark={e.kind === "earmark"} class:overdue={p?.overdue} class:paid={p?.paid}>
             <td class="when">
               <span>{fmtDate(e.date)}</span>
               <span class="rel">{p?.paid ? "paid" : relative(e.date)}</span>
             </td>
             <td class="item">
-              <span class="name">{e.kind === "paycheck" ? "💵 " : e.kind === "transfer" ? "↘ " : ""}{e.name}</span>
+              <span class="name">{e.kind === "paycheck" ? "💵 " : e.kind === "transfer" ? "↘ " : e.kind === "earmark" ? "↪ " : ""}{e.name}</span>
               <span class="tags">
                 {#if e.kind === "paycheck"}<span class="tag">paycheck</span>{/if}
                 {#if e.kind === "transfer"}<span class="tag" title="Detected by Plaid from past transfers">transfer in</span>{/if}
+                {#if e.kind === "earmark"}<span class="tag earmark-tag" title="Set aside from checking on this payday and moved across before the bill is due. Only what that account cannot already cover.">earmarked · move to {e.to_name}</span>{/if}
                 {#if p?.synced_from}<span class="tag synced" title="Read from the biller's site">portal</span>{/if}
                 {#if p?.source === "card"}<span class="tag">card</span>{/if}
                 {#if p?.source === "recurring"}<span class="tag" title="Detected by Plaid from past payments">detected</span>{/if}
@@ -155,10 +156,10 @@
                 {/if}
               </span>
             </td>
-            <td class="num amt" class:in={e.kind !== "payment"}>
-              {#if e.amount != null}{e.kind !== "payment" ? "+" : ""}{fmtMoney(e.amount)}{:else}varies{/if}
+            <td class="num amt" class:in={e.kind === "paycheck" || e.kind === "transfer"}>
+              {#if e.amount != null}{e.kind === "paycheck" || e.kind === "transfer" ? "+" : ""}{fmtMoney(e.amount)}{:else}varies{/if}
               {#if p?.amount_basis}<span class="basis">{p.amount_basis === "minimum" ? "min" : "avg"}</span>{/if}
-              {#if e.kind !== "payment" || p?.estimated}<span class="basis" title="Projected, not stated">est.</span>{/if}
+              {#if e.kind === "paycheck" || e.kind === "transfer" || p?.estimated}<span class="basis" title="Projected, not stated">est.</span>{/if}
             </td>
             <td class="acct">
               {#if e.from_key}
@@ -332,6 +333,13 @@
   }
   .paidnote {
     color: var(--accent);
+  }
+  tr.earmark td {
+    background: color-mix(in srgb, var(--accent) 6%, transparent);
+  }
+  .tag.earmark-tag {
+    color: var(--accent);
+    border-color: var(--accent-dim);
   }
   /* Before is context, after is the figure that matters. */
   .bal .before {

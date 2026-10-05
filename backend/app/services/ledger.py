@@ -11,7 +11,13 @@ straight before and straight after it:
 * a paycheck or transfer in lands in the bank account it is paid into.
 
 Checking accounts are pooled as one, as in the planner; every other bank
-account, card and loan keeps its own balance. Payments are posted before
+account, card and loan keeps its own balance.
+
+A bill drawn from savings (say) is assumed funded from checking: whatever
+savings cannot cover from its own balance is earmarked out of checking on
+the last checking payday before the bill is due, and moved across. So a
+savings account never reads as short when the money is simply waiting to be
+moved, and checking shows that money as spoken for from the day it lands. Payments are posted before
 money in on the same day — a deposit landing that morning is not a safe
 thing to lean on. The planner reads its low points from here, so the ledger
 and the plan cannot disagree.
@@ -133,6 +139,55 @@ class _Book:
         return a.end_balance
 
 
+def _earmarks(
+    entries: list[tuple[tuple, LedgerEntry]], books: dict[str, "_Book"], today: date
+) -> list[tuple[tuple, LedgerEntry]]:
+    """Checking money to set aside for bills drawn from other bank accounts.
+
+    Each non-checking bank account is walked through its own payments and
+    money in, in posting order. Before a payment it cannot cover, the gap is
+    earmarked from checking on the last checking payday before the due date
+    — or today, when no payday comes first — and moved across. Only the gap:
+    money already moved, or already sitting there, needs no earmark.
+    """
+    paydays = sorted(
+        {e.date for _, e in entries if e.kind == "paycheck" and e.to_key == CHECKING}
+    )
+    out = []
+    for key, book in books.items():
+        if book.account.kind != "cash" or key == CHECKING:
+            continue
+        balance = book.account.start_balance
+        own = sorted(
+            ((k, e) for k, e in entries if key in (e.from_key, e.to_key)),
+            key=lambda ke: ke[0],
+        )
+        for _, e in own:
+            if e.amount is None or (e.payment and e.payment.paid):
+                continue
+            if e.to_key == key:
+                balance += e.amount
+                continue
+            need = e.amount - balance
+            if need > 0:
+                on = max((d for d in paydays if d < e.date), default=today)
+                on = max(on, today)
+                earmark = LedgerEntry(
+                    date=on,
+                    kind="earmark",
+                    name=f"For {e.name}",
+                    amount=need,
+                    from_key=CHECKING,
+                    to_key=key,
+                )
+                # On a payday it follows that day's paycheck; on the bill's own
+                # day (nothing earlier to fund it from) it goes first.
+                out.append(((on, 2 if on < e.date else -1), earmark))
+                balance += need
+            balance -= e.amount
+    return out
+
+
 async def build_ledger(session: AsyncSession, today: date, days: int) -> LedgerResponse:
     accounts = {
         a.account_id: a for a in (await session.scalars(select(Account))).all()
@@ -206,6 +261,7 @@ async def build_ledger(session: AsyncSession, today: date, days: int) -> LedgerR
                 to_key=cash_key(c.account_id),
             )
             entries.append(((c.date, 1), entry))
+    entries += _earmarks(entries, books, today)
     entries.sort(key=lambda e: e[0])
 
     out = []

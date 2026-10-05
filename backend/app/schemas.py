@@ -459,7 +459,10 @@ class LedgerAccount(BaseModel):
 
 class LedgerEntry(BaseModel):
     date: date
-    kind: Literal["payment", "paycheck", "transfer"]
+    # "earmark" is checking money set aside on a payday and moved to the
+    # savings (or other) account a later bill is drawn from — see
+    # services.ledger._earmarks.
+    kind: Literal["payment", "paycheck", "transfer", "earmark"]
     name: str
     amount: Decimal | None = None
     # Exactly one of these, by kind.

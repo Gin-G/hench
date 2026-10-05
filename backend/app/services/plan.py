@@ -96,6 +96,11 @@ async def build_plan(session: AsyncSession, today: date) -> PlanResponse:
         if e.payment and not e.payment.paid and e.payment.pay_from == "cash"
     ]
     due = [e for e in payments if in_checking(e.from_key) and e.date <= until]
+    # Checking set aside for a savings-drawn bill before the next paycheck is
+    # spoken for too. One dated on the payday itself comes out of that
+    # paycheck, so it is not part of what has to last until then.
+    earmarked = [e for e in ledger.entries if e.kind == "earmark" and e.date < until]
+    due += earmarked
     due_total = sum((e.amount for e in due if e.amount is not None), ZERO)
 
     def low_point(key: str) -> tuple[Decimal, date]:
