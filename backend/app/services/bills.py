@@ -16,11 +16,11 @@ import re
 from datetime import date, timedelta
 from decimal import ROUND_UP, Decimal
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ..models import Account, Bill, Item, RecurringStream
+from ..models import Account, Bill, Item, RecurringStream, Transaction
 from ..schemas import DebtOut, DebtsResponse, UpcomingPayment, UpcomingResponse
 from .schedule import PLAID_FREQUENCIES, next_on_or_after, occurrences
 
@@ -111,8 +111,50 @@ def _bill_payments(
     return payments
 
 
+# How long before a statement date a card's payments are looked for, when a
+# card reports no statement date at all.
+_NO_STATEMENT_LOOKBACK = timedelta(days=35)
+
+
+async def _card_credits(
+    session: AsyncSession, accounts: dict[str, Account], today: date
+) -> dict[str, list[tuple[date, Decimal]]]:
+    """Payments posted to each card or loan, newest first, pending included.
+
+    Seen from the card's own side, as credits: Plaid categorises the "Payment
+    Received" line as a transfer in or a loan payment. Refunds are credits
+    too but carry the merchant's category, so they are not mistaken for
+    payments.
+    """
+    debt_ids = [a.account_id for a in accounts.values() if a.type in ("credit", "loan")]
+    if not debt_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(Transaction.account_id, Transaction.date, Transaction.amount)
+            .where(
+                Transaction.account_id.in_(debt_ids),
+                Transaction.amount < 0,
+                Transaction.date >= today - timedelta(days=62),
+                or_(
+                    Transaction.category_primary.in_(("TRANSFER_IN", "LOAN_PAYMENTS")),
+                    Transaction.pfc_primary.in_(("TRANSFER_IN", "LOAN_PAYMENTS")),
+                ),
+            )
+            .order_by(Transaction.date.desc())
+        )
+    ).all()
+    credits: dict[str, list[tuple[date, Decimal]]] = {}
+    for account_id, on, amount in rows:
+        credits.setdefault(account_id, []).append((on, -Decimal(amount)))
+    return credits
+
+
 def _card_payments(
-    accounts: dict[str, Account], today: date, end: date
+    accounts: dict[str, Account],
+    today: date,
+    end: date,
+    credits: dict[str, list[tuple[date, Decimal]]] | None = None,
 ) -> list[UpcomingPayment]:
     payments = []
     for account in accounts.values():
@@ -127,22 +169,36 @@ def _card_payments(
         # almost always a cycle already paid, not a missed payment.
         if due < today and not liability.is_overdue:
             continue
-        paid = bool(
+        # Payments posted to the card since the statement was issued count
+        # toward this cycle. Some banks (Barclays, for one) report the last
+        # payment's amount but never its date, so the card's own transactions
+        # are the dependable signal; the bank's date is used where given.
+        since = liability.last_statement_issue_date or (due - _NO_STATEMENT_LOOKBACK)
+        cycle = [(on, amt) for on, amt in (credits or {}).get(account.account_id, []) if on > since]
+        paid_amount = sum((amt for _, amt in cycle), Decimal("0")) or None
+        minimum = liability.minimum_payment_amount or Decimal("0")
+        paid = bool(paid_amount and paid_amount >= minimum) or bool(
             liability.last_payment_date
             and liability.last_statement_issue_date
             and liability.last_payment_date >= liability.last_statement_issue_date
         )
+        # Part of the minimum already paid: only the rest is still due.
+        still_due = liability.minimum_payment_amount
+        if still_due is not None and paid_amount and not paid:
+            still_due = still_due - paid_amount
         payments.append(
             UpcomingPayment(
                 source="card",
                 ref_id=account.account_id,
                 name=account_label(account),
                 due_date=due,
-                amount=liability.minimum_payment_amount,
+                amount=still_due,
                 amount_basis="minimum",
                 statement_balance=liability.last_statement_balance,
-                overdue=bool(liability.is_overdue),
+                overdue=bool(liability.is_overdue) and not paid,
                 paid=paid,
+                paid_amount=paid_amount,
+                paid_date=cycle[0][0] if cycle else None,
                 account=account.item.institution_name,
                 **pay_from(account.pay_from_account_id, accounts),
             )
@@ -228,10 +284,11 @@ async def build_upcoming(
         ).all()
     )
     by_id = {a.account_id: a for a in accounts}
+    credits = await _card_credits(session, by_id, today)
 
     payments = (
         _bill_payments(bills, by_id, today, end)
-        + _card_payments(by_id, today, end)
+        + _card_payments(by_id, today, end, credits)
         + _stream_payments(streams, by_id, today, end)
     )
     payments.sort(key=lambda p: (p.due_date, p.name.lower()))

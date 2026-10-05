@@ -108,6 +108,11 @@
                 {#if p?.statement_balance != null && Number(p.statement_balance) > 0}
                   <span class="hint">statement {fmtMoney(p.statement_balance)}</span>
                 {/if}
+                {#if p?.paid_amount != null}
+                  <span class="hint paidnote">
+                    paid {fmtMoney(p.paid_amount)}{#if p.paid_date}&nbsp;· {fmtDate(p.paid_date)}{/if}{#if p.statement_balance != null && Number(p.paid_amount) >= Number(p.statement_balance)}, statement paid in full{/if}
+                  </span>
+                {/if}
               </span>
             </td>
             <td class="num amt" class:in={e.kind !== "payment"}>
@@ -258,6 +263,9 @@
   }
   .bal {
     font-variant-numeric: tabular-nums;
+  }
+  .paidnote {
+    color: var(--accent);
   }
   /* Before is context, after is the figure that matters. */
   .bal .before {

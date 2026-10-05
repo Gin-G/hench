@@ -226,9 +226,15 @@ class UpcomingPayment(BaseModel):
     statement_balance: Decimal | None = None
     autopay: bool | None = None
     overdue: bool = False
-    # A card whose last payment is on or after its last statement date — Plaid
-    # keeps showing the old due date until the next statement closes.
+    # A card already paid this cycle — Plaid keeps showing the old due date
+    # until the next statement closes. Known from payments posted to the card
+    # since its statement (pending included) covering the minimum, or from the
+    # bank's own last-payment date where it reports one.
     paid: bool = False
+    # What has been paid toward this cycle so far, and when the latest payment
+    # posted, as seen in the card's transactions. Set for cards only.
+    paid_amount: Decimal | None = None
+    paid_date: date | None = None
     account: str | None = None
     # The due date is projected, not stated by the biller.
     estimated: bool = False
