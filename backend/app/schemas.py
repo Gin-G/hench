@@ -450,15 +450,18 @@ class LedgerEntry(BaseModel):
     payment: UpcomingPayment | None = None
     inflow: Paycheck | None = None
     # The account the money leaves (or the card it is charged to), and its
-    # balance straight after. Null when the entry moves nothing: already
-    # paid, amount unknown, or an account with no balance to track.
+    # balance straight before and straight after. An entry that moves nothing
+    # (already paid, amount unknown) shows the same balance on both sides;
+    # both are null only for an account with no balance to track.
     from_key: str | None = None
     from_name: str | None = None
+    from_before: Decimal | None = None
     from_balance: Decimal | None = None
     # The account the money reaches: the card or loan being paid down, or the
     # bank account a paycheck or transfer lands in.
     to_key: str | None = None
     to_name: str | None = None
+    to_before: Decimal | None = None
     to_balance: Decimal | None = None
 
 

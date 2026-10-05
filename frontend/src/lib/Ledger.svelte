@@ -1,6 +1,6 @@
 <script>
   // The upcoming timeline as a ledger: every payment, paycheck and transfer
-  // in, with the balance of each account it touches straight after it.
+  // in, with the balance of each account it touches before and after it.
   import { api, fmtMoney, fmtDate, relative } from "./api.js";
 
   let { ledger, accounts = [], days = $bindable(30), horizons = [14, 30, 60, 90], onAct } = $props();
@@ -34,6 +34,7 @@
 
   const isDebt = (key) => books[key]?.kind === "debt";
   const neg = (key, bal) => bal != null && !isDebt(key) && Number(bal) < 0;
+  const same = (a, b) => a != null && b != null && Number(a) === Number(b);
 </script>
 
 <section class="panel">
@@ -68,8 +69,8 @@
           <th>Date</th>
           <th>Item</th>
           <th class="num">Amount</th>
-          <th>From · balance after</th>
-          <th>Paid to · balance after</th>
+          <th>From · before → after</th>
+          <th>Paid to · before → after</th>
           <th></th>
         </tr>
       </thead>
@@ -118,8 +119,13 @@
               {#if e.from_key}
                 <span class="aname">{e.from_name}{#if isDebt(e.from_key)} <span class="basis">charged</span>{/if}</span>
                 {#if e.from_balance != null}
-                  <span class="bal" class:neg={neg(e.from_key, e.from_balance)}>
-                    {isDebt(e.from_key) ? "owe " : ""}{fmtMoney(e.from_balance)}
+                  <span class="bal">
+                    {#if isDebt(e.from_key)}owe&nbsp;{/if}<span class="before">{fmtMoney(e.from_before)}</span>
+                    {#if same(e.from_before, e.from_balance)}
+                      <span class="basis">no change</span>
+                    {:else}
+                      → <strong class:neg={neg(e.from_key, e.from_balance)}>{fmtMoney(e.from_balance)}</strong>
+                    {/if}
                   </span>
                 {/if}
               {/if}
@@ -128,7 +134,14 @@
               {#if e.to_key}
                 <span class="aname">{e.to_name}</span>
                 {#if e.to_balance != null}
-                  <span class="bal">{isDebt(e.to_key) ? "owe " : ""}{fmtMoney(e.to_balance)}</span>
+                  <span class="bal">
+                    {#if isDebt(e.to_key)}owe&nbsp;{/if}<span class="before">{fmtMoney(e.to_before)}</span>
+                    {#if same(e.to_before, e.to_balance)}
+                      <span class="basis">no change</span>
+                    {:else}
+                      → <strong>{fmtMoney(e.to_balance)}</strong>
+                    {/if}
+                  </span>
                 {/if}
               {/if}
             </td>
@@ -245,9 +258,12 @@
   }
   .bal {
     font-variant-numeric: tabular-nums;
-    font-weight: 600;
   }
-  .bal.neg {
+  /* Before is context, after is the figure that matters. */
+  .bal .before {
+    color: var(--muted);
+  }
+  .bal strong.neg {
     color: var(--danger);
   }
   .name {

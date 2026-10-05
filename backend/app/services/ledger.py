@@ -1,7 +1,8 @@
 """A running balance for every account across the upcoming timeline.
 
 Each payment, paycheck and transfer in is posted in date order to the
-accounts it touches, so every row carries the balance straight after it:
+accounts it touches, so every row carries the balance of each of them
+straight before and straight after it:
 
 * a payment leaves the bank account it is drawn from (or is charged to a
   card, raising what is owed on it);
@@ -208,7 +209,10 @@ async def build_ledger(session: AsyncSession, today: date, days: int) -> LedgerR
                 continue
             book = books[key]
             setattr(entry, f"{side}_name", book.account.name)
+            setattr(entry, f"{side}_before", book.account.end_balance)
             if not moves:
+                # Shown holding steady, so the balance reads through every row.
+                setattr(entry, f"{side}_balance", book.account.end_balance)
                 continue
             # Cash goes down when money leaves and up when it arrives; a debt
             # goes up when charged and down when paid.
