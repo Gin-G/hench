@@ -84,6 +84,11 @@ class Account(Base):
     pay_from_account_id: Mapped[str | None] = mapped_column(
         ForeignKey("accounts.account_id", ondelete="SET NULL"), nullable=True
     )
+    # False leaves the account out of the forward-looking plan — its balance,
+    # money landing in it, payments drawn from it, and for a card its debt —
+    # while it stays linked and in cash flow. Set from the UI; sync never
+    # writes it. For a spouse's own account, say.
+    in_plan: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     # Credit and loan accounts: the APR to use in place of Plaid's, for a loan
     # Plaid reports no rate for, or a card whose rate it has wrong.
     apr_override: Mapped[Decimal | None] = mapped_column(Rate, nullable=True)

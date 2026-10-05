@@ -79,6 +79,10 @@ async def _inflows(
     for stream in streams:
         if stream.average_amount is None:
             continue
+        landing = accounts.get(stream.account_id)
+        if landing is not None and not landing.in_plan:
+            # Money into an account left out of the plan is not the user's.
+            continue
         if _is_paycheck(stream):
             into, fallback = paychecks, "Paycheck"
         elif _is_transfer_in(stream, accounts):
@@ -141,7 +145,10 @@ async def build_ledger(session: AsyncSession, today: date, days: int) -> LedgerR
     checking = [
         a
         for a in accounts.values()
-        if a.type == "depository" and a.subtype == "checking" and balance_of(a) is not None
+        if a.type == "depository"
+        and a.subtype == "checking"
+        and a.in_plan
+        and balance_of(a) is not None
     ]
     books[CHECKING] = _Book(
         CHECKING,
@@ -151,6 +158,8 @@ async def build_ledger(session: AsyncSession, today: date, days: int) -> LedgerR
         today,
     )
     for a in accounts.values():
+        if not a.in_plan:
+            continue
         if a.type == "depository" and a.subtype != "checking" and balance_of(a) is not None:
             books[a.account_id] = _Book(a.account_id, account_label(a), "cash", balance_of(a), today)
         elif a.type in _DEBT_TYPES and a.current_balance is not None:

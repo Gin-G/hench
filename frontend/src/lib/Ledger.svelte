@@ -32,6 +32,16 @@
     );
   }
 
+  // Bank accounts, cards and loans that can be in or out of the plan.
+  let planAccounts = $derived(
+    accounts.filter((a) => ["depository", "credit", "loan"].includes(a.type))
+  );
+  let leftOut = $derived(planAccounts.filter((a) => a.in_plan === false));
+
+  function setInPlan(a, inPlan) {
+    onAct(() => api.updateAccount(a.account_id, { in_plan: inPlan }));
+  }
+
   const isDebt = (key) => books[key]?.kind === "debt";
   const neg = (key, bal) => bal != null && !isDebt(key) && Number(bal) < 0;
   const same = (a, b) => a != null && b != null && Number(a) === Number(b);
@@ -57,6 +67,36 @@
         </div>
       {/each}
     </div>
+  {/if}
+
+  {#if planAccounts.length}
+    <details class="inplan">
+      <summary>
+        Accounts in the plan
+        {#if leftOut.length}
+          <span class="muted">· leaving out {leftOut.map(accountName).join(", ")}</span>
+        {/if}
+      </summary>
+      <p class="muted">
+        An account left out stays linked and in cash flow, but its balance, the
+        money landing in it and anything it pays are not counted here.
+      </p>
+      <ul>
+        {#each planAccounts as a (a.account_id)}
+          <li>
+            <label>
+              <input
+                type="checkbox"
+                checked={a.in_plan !== false}
+                onchange={(ev) => setInPlan(a, ev.currentTarget.checked)}
+              />
+              {accountName(a)}
+              <span class="muted">{a.institution_name ?? ""} · {a.subtype ?? a.type}</span>
+            </label>
+          </li>
+        {/each}
+      </ul>
+    </details>
   {/if}
 
   {#if ledger && !ledger.entries.length}
@@ -263,6 +303,32 @@
   }
   .bal {
     font-variant-numeric: tabular-nums;
+  }
+  .inplan {
+    margin-bottom: 0.8rem;
+    font-size: 0.85rem;
+  }
+  .inplan summary {
+    cursor: pointer;
+    color: var(--text);
+  }
+  .inplan p {
+    margin: 0.4rem 0;
+    font-size: 0.8rem;
+  }
+  .inplan ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+    gap: 0.2rem 1rem;
+  }
+  .inplan label {
+    display: flex;
+    gap: 0.45rem;
+    align-items: baseline;
+    cursor: pointer;
   }
   .paidnote {
     color: var(--accent);

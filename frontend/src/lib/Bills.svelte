@@ -141,7 +141,8 @@
         <span class="label">Heads up</span>
         <span class="value">Short {fmtMoney(-Number(plan.low_point))} on {fmtDate(plan.low_point_date)}</span>
         <span class="sub">
-          Counting every bill and paycheck through {fmtDate(plan.horizon)}, checking dips below zero. Nothing spare to send to debt yet.
+          Counting every bill and paycheck through {fmtDate(plan.horizon)}, checking dips below zero.
+          Move at least {fmtMoney(-Number(plan.low_point))} into checking before {fmtDate(plan.low_point_date)} to cover it. Nothing spare to send to debt yet.
         </span>
       {:else}
         <span class="label">Safe to send to debt now</span>

@@ -86,6 +86,8 @@ async def update_account(
     changes = body.model_dump(exclude_unset=True)
     if "nickname" in changes:
         account.nickname = (body.nickname or "").strip() or None
+    if changes.get("in_plan") is not None:
+        account.in_plan = body.in_plan
     if "pay_from_account_id" in changes:
         source_id = body.pay_from_account_id
         if source_id is not None:

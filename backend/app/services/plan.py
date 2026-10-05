@@ -65,7 +65,10 @@ async def build_plan(session: AsyncSession, today: date) -> PlanResponse:
     cash = [
         CashAccount(account_id=a.account_id, name=account_label(a), available=balance_of(a))
         for a in accounts.values()
-        if a.type == "depository" and a.subtype == "checking" and balance_of(a) is not None
+        if a.type == "depository"
+        and a.subtype == "checking"
+        and a.in_plan
+        and balance_of(a) is not None
     ]
     cash_total = books[CHECKING].start_balance
 

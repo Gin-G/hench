@@ -72,6 +72,7 @@ class AccountOut(BaseModel):
     item_id: str
     name: str | None = None
     nickname: str | None = None
+    in_plan: bool = True
     official_name: str | None = None
     mask: str | None = None
     type: str | None = None
@@ -117,6 +118,8 @@ class AccountUpdate(BaseModel):
 
     # Blank or null clears the nickname back to the institution's name.
     nickname: str | None = None
+    # False leaves the account out of the plan (see models.Account.in_plan).
+    in_plan: bool | None = None
     # Credit and loan accounts only: the bank account that pays them. Null
     # goes back to checking.
     pay_from_account_id: str | None = None

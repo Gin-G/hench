@@ -286,11 +286,20 @@ async def build_upcoming(
     by_id = {a.account_id: a for a in accounts}
     credits = await _card_credits(session, by_id, today)
 
+    # Accounts left out of the plan: nothing they pay, and no card of theirs,
+    # belongs on this timeline.
+    excluded = {a.account_id for a in accounts if not a.in_plan}
     payments = (
         _bill_payments(bills, by_id, today, end)
         + _card_payments(by_id, today, end, credits)
         + _stream_payments(streams, by_id, today, end)
     )
+    payments = [
+        p
+        for p in payments
+        if p.pay_from_account_id not in excluded
+        and not (p.source == "card" and p.ref_id in excluded)
+    ]
     payments.sort(key=lambda p: (p.due_date, p.name.lower()))
 
     # Card-charged payments are already inside that card's own payment.
@@ -392,7 +401,7 @@ async def build_debts(session: AsyncSession, today: date) -> DebtsResponse:
             select(Account, Item.institution_name)
             .join(Item, Account.item_id == Item.item_id)
             .options(selectinload(Account.liability))
-            .where(Account.type.in_(_DEBT_TYPES))
+            .where(Account.type.in_(_DEBT_TYPES), Account.in_plan.is_(True))
         )
     ).all()
     for account, institution in rows:
