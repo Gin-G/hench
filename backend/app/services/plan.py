@@ -13,15 +13,19 @@ to run out.
 
 That window alone overstates what is spare when a large bill lands just after
 a small paycheck, so the amount actually recommended for debt is the *low
-point*: the lowest the checking balance is projected to reach over the next
-``_LOOKAHEAD_DAYS``, walking every bill, paycheck and transfer in date order. Paying that
-much extra today still leaves every later bill covered.
+point*: the lowest every bank account in the plan, taken together, is
+projected to reach over the next ``_LOOKAHEAD_DAYS``, walking every bill,
+paycheck and transfer in date order. Paying that much extra today still
+leaves every later bill covered. When it is negative, it is how much has to
+come in from outside the plan (an account left out of it, say) by that date.
 
 Payments are charged to the account they are drawn from. Detected payments
 use the account Plaid saw them leave; bills and card or loan payments use the
 account picked for them in the UI, defaulting to checking. Checking accounts
-are pooled; a savings account paying the mortgage is projected on its own, and
-only its shortfall, if any, comes out of what checking can spare. The running
+are pooled; a savings account paying the mortgage is projected on its own, so
+the plan can say when money has to be moved over, while what is spare comes
+from all of them together. Accounts left out of the plan (Account.in_plan)
+are ignored throughout. The running
 balances themselves come from services.ledger, which the Upcoming table shows
 row by row.
 
@@ -131,9 +135,28 @@ async def build_plan(session: AsyncSession, today: date) -> PlanResponse:
                 low_point_date=a_low_date,
             )
         )
-    # Whatever another account will come up short is a transfer checking has
-    # to make, so it is not spare.
-    shortfall = sum((-f.low_point for f in funding if f.low_point < 0), ZERO)
+    # Every bank account in the plan walked together. A shortfall in savings
+    # is covered by moving money from checking, but that move can come from
+    # any paycheck that lands before the savings bill is due — so subtracting
+    # savings' shortfall from checking's low point mixed two different dates
+    # and could report nothing spare when there was plenty. The combined
+    # balance never makes that mistake.
+    cash_keys = {b.key for b in ledger.accounts if b.kind == "cash"}
+    cash_low = running = sum(
+        (b.start_balance for b in ledger.accounts if b.kind == "cash"), ZERO
+    )
+    cash_low_date = today
+    for e in ledger.entries:
+        if e.date > horizon:
+            break
+        for key, before, after in (
+            (e.from_key, e.from_before, e.from_balance),
+            (e.to_key, e.to_before, e.to_balance),
+        ):
+            if key in cash_keys and before is not None and after is not None:
+                running += after - before
+        if running < cash_low:
+            cash_low, cash_low_date = running, e.date
 
     debts = await build_debts(session, today)
 
@@ -152,7 +175,9 @@ async def build_plan(session: AsyncSession, today: date) -> PlanResponse:
         horizon=horizon,
         low_point=low,
         low_point_date=low_date,
-        safe_extra=max(low - shortfall, ZERO),
+        cash_low_point=cash_low,
+        cash_low_point_date=cash_low_date,
+        safe_extra=max(cash_low, ZERO),
         funding_accounts=funding,
         target_debt=debts.target,
         target_reason=debts.target_reason,

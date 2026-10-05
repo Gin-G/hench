@@ -136,22 +136,19 @@
         <span class="sub">until the paycheck lands</span>
       </div>
     </div>
-    <div class="safe" class:short={Number(plan.low_point) < 0}>
-      {#if Number(plan.low_point) < 0}
+    <div class="safe" class:short={Number(plan.cash_low_point) < 0}>
+      {#if Number(plan.cash_low_point) < 0}
         <span class="label">Heads up</span>
-        <span class="value">Short {fmtMoney(-Number(plan.low_point))} on {fmtDate(plan.low_point_date)}</span>
+        <span class="value">Short {fmtMoney(-Number(plan.cash_low_point))} on {fmtDate(plan.cash_low_point_date)}</span>
         <span class="sub">
-          Counting every bill and paycheck through {fmtDate(plan.horizon)}, checking dips below zero.
-          Move at least {fmtMoney(-Number(plan.low_point))} into checking before {fmtDate(plan.low_point_date)} to cover it. Nothing spare to send to debt yet.
+          Counting every bill and paycheck through {fmtDate(plan.horizon)}, your accounts together dip below zero.
+          Bring in at least {fmtMoney(-Number(plan.cash_low_point))} before {fmtDate(plan.cash_low_point_date)} to cover it. Nothing spare to send to debt yet.
         </span>
       {:else}
         <span class="label">Safe to send to debt now</span>
         <span class="value">{fmtMoney(plan.safe_extra)}</span>
         <span class="sub">
-          The lowest checking gets through {fmtDate(plan.horizon)}, on {fmtDate(plan.low_point_date)}, counting every bill and paycheck.
-          {#if Number(plan.safe_extra) < Number(plan.low_point)}
-            Less {fmtMoney(Number(plan.low_point) - Number(plan.safe_extra))} to cover the shortfall below.
-          {/if}
+          The lowest your accounts get together through {fmtDate(plan.horizon)}, on {fmtDate(plan.cash_low_point_date)}, counting every bill and paycheck.
           {#if plan.target_debt}
             Best spent on <strong>{plan.target_debt.name}</strong> ({fmtMoney(plan.target_debt.balance)}): {plan.target_reason}
           {/if}

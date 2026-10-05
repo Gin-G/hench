@@ -361,15 +361,22 @@ class PlanResponse(BaseModel):
     unknown_amounts: int
     left_over: Decimal
     # Lowest projected checking balance between now and ``horizon``, walking
-    # every bill and paycheck in date order — and so the most that can go to
-    # debt today without a later bill coming up short.
+    # every bill and paycheck in date order.
     horizon: date
     low_point: Decimal
     low_point_date: date
+    # The same walk over every bank account in the plan together (checking
+    # and savings, say). Money moves freely between them, so this, not
+    # checking alone, is how short the user really runs: negative means that
+    # much has to come in from outside the plan by that date.
+    cash_low_point: Decimal
+    cash_low_point_date: date
+    # The most that can go to debt today without a later bill coming up
+    # short anywhere: the combined low point, floored at zero.
     safe_extra: Decimal
     # Savings and other bank accounts that bills are drawn from, each
     # projected over the same lookahead. A negative low point there is money
-    # checking must move over, and comes out of safe_extra.
+    # to move over from checking before that date.
     funding_accounts: list[FundingAccount] = []
     # Where extra money does the most; see DebtsResponse.target.
     target_debt: DebtOut | None
