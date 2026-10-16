@@ -107,13 +107,15 @@ def _internal_transfers(txns: list[Transaction], debt_accounts: set[str]) -> set
 async def build_sankey(session: AsyncSession, month: str) -> SankeyResponse:
     start, end = _month_bounds(month)
     # A few days either side, so a transfer that posts across the month
-    # boundary still finds its other half.
+    # boundary still finds its other half. Twice the window, so that half's
+    # own closer match is there to claim it: a card credited on Oct 2 and
+    # paid from checking on Oct 5 is not September's payment of Sep 28.
     nearby = (
         await session.scalars(
             select(Transaction)
             .where(
-                Transaction.date >= start - _PAIR_WINDOW,
-                Transaction.date < end + _PAIR_WINDOW,
+                Transaction.date >= start - 2 * _PAIR_WINDOW,
+                Transaction.date < end + 2 * _PAIR_WINDOW,
             )
             .options(selectinload(Transaction.override))
         )

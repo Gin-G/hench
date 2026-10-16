@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse
 
 from . import access
 from .config import get_settings
-from .routers import accounts, bills, link, oauth, sankey, sync, transactions
+from .routers import accounts, bills, link, networth, oauth, sankey, sync, transactions
 
 settings = get_settings()
 logging.basicConfig(level=settings.log_level.upper())
@@ -89,6 +89,7 @@ app.include_router(transactions.router)
 app.include_router(sankey.router)
 app.include_router(accounts.router)
 app.include_router(bills.router)
+app.include_router(networth.router)
 app.include_router(oauth.router)
 
 

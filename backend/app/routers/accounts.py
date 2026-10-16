@@ -158,8 +158,9 @@ async def update_recurring(
     body: RecurringStreamUpdate,
     session: AsyncSession = Depends(get_session),
 ) -> RecurringStream:
-    """Hide or unhide a detected stream on the upcoming timeline, or set the
-    amount to plan with in place of Plaid's average."""
+    """Hide or unhide a detected stream on the upcoming timeline, set the
+    amount to plan with in place of Plaid's average, or mark it as debt,
+    essential or optional."""
     stream = await session.get(RecurringStream, stream_id)
     if stream is None:
         raise HTTPException(status_code=404, detail="Recurring stream not found")
@@ -170,6 +171,8 @@ async def update_recurring(
         stream.amount_override = body.amount_override
     if changes.get("not_duplicate") is not None:
         stream.not_duplicate = body.not_duplicate
+    if "commitment" in changes:
+        stream.commitment = body.commitment
     await session.flush()
     await session.refresh(stream)
     return stream

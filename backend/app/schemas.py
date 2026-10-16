@@ -113,6 +113,7 @@ class RecurringStreamOut(BaseModel):
     hidden: bool
     amount_override: Decimal | None = None
     not_duplicate: bool = False
+    commitment: str | None = None
     status: str | None = None
     category_primary: str | None = None
     category_detailed: str | None = None
@@ -144,6 +145,11 @@ class AccountUpdate(BaseModel):
     promo_deferred_interest: bool | None = None
 
 
+# A payment that ends once a debt is paid off, a cost that stays, or one
+# that could go.
+Commitment = Literal["debt", "essential", "optional"]
+
+
 class RecurringStreamUpdate(BaseModel):
     """Partial update: only the fields sent are changed."""
 
@@ -152,6 +158,9 @@ class RecurringStreamUpdate(BaseModel):
     amount_override: Decimal | None = Field(default=None, ge=0)
     # True: this and the linked card it looks like are both real payments.
     not_duplicate: bool | None = None
+    # Debt, essential or optional; null goes back to the guess from its
+    # category.
+    commitment: Commitment | None = None
 
 
 # --- Bills and debts -------------------------------------------------------
@@ -528,3 +537,128 @@ class LedgerResponse(BaseModel):
     entries: list[LedgerEntry]
     paychecks: list[Paycheck]
     transfers_in: list[Paycheck]
+
+
+# --- Net worth ---------------------------------------------------------------
+HoldingKind = Literal["asset", "debt"]
+
+
+class HoldingIn(BaseModel):
+    name: str = Field(min_length=1)
+    kind: HoldingKind
+    category: str = Field(min_length=1)
+    # Positive either way: what an asset is worth, what a debt has left.
+    value: Decimal = Field(ge=0)
+    # Defaults to today.
+    as_of: date | None = None
+    secured_by_id: int | None = None
+    notes: str | None = None
+
+
+class HoldingUpdate(BaseModel):
+    """Partial update: only the fields sent are changed. A new value is
+    recorded at as_of (default today), keeping the old one in the history."""
+
+    name: str | None = Field(default=None, min_length=1)
+    category: str | None = Field(default=None, min_length=1)
+    value: Decimal | None = Field(default=None, ge=0)
+    as_of: date | None = None
+    secured_by_id: int | None = None
+    notes: str | None = None
+
+
+class HoldingOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    kind: HoldingKind
+    category: str
+    value: Decimal
+    as_of: date
+    secured_by_id: int | None = None
+    notes: str | None = None
+
+
+class NetWorthLine(BaseModel):
+    """One thing owned or owed, linked or entered by hand."""
+
+    source: Literal["linked", "manual"]
+    # account_id for a linked account, the holding's id for a manual one.
+    ref_id: str
+    name: str
+    kind: HoldingKind
+    category: str
+    value: Decimal
+    as_of: date | None = None
+    detail: str | None = None
+    holding: HoldingOut | None = None
+
+
+class Equity(BaseModel):
+    """An asset less the debts secured on it: the home less the mortgage."""
+
+    name: str
+    value: Decimal
+    owed: Decimal
+    equity: Decimal
+
+
+class NetWorthPoint(BaseModel):
+    month: str
+    on: date
+    assets: Decimal
+    debts: Decimal
+    net_worth: Decimal
+    # Linked bank accounts less linked cards: the part that moves with
+    # everyday spending.
+    liquid: Decimal
+
+
+class MonthFlow(BaseModel):
+    """A month's money in and out, and where any shortfall came from."""
+
+    month: str
+    # True for the month in progress.
+    partial: bool
+    income: Decimal
+    essential: Decimal
+    debt: Decimal
+    other: Decimal
+    spending: Decimal
+    # Income less spending: positive saved, negative short.
+    net: Decimal
+    # Change in the bank accounts' balances.
+    cash_change: Decimal
+    # Charged to cards, and paid onto them (payments, refunds).
+    card_charged: Decimal
+    card_paid: Decimal
+    # Charged less paid: positive is new card debt.
+    card_change: Decimal
+
+
+class CommitmentLine(BaseModel):
+    """A regular payment, as a monthly figure."""
+
+    source: Literal["card", "recurring", "bill"]
+    ref_id: str
+    name: str
+    commitment: Commitment
+    # False when the class was guessed from the category.
+    chosen: bool
+    monthly: Decimal
+    frequency: str | None = None
+    # Cards and manual debts: what is left to pay.
+    owed: Decimal | None = None
+
+
+class NetWorthResponse(BaseModel):
+    as_of: date
+    assets: Decimal
+    debts: Decimal
+    net_worth: Decimal
+    lines: list[NetWorthLine]
+    equity: list[Equity]
+    history: list[NetWorthPoint]
+    months: list[MonthFlow]
+    commitments: list[CommitmentLine]

@@ -101,6 +101,13 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(changes),
     }),
+  // Net worth, and what's owned and owed outside Plaid.
+  networth: () => req("/networth"),
+  createHolding: (holding) =>
+    req("/holdings", { method: "POST", body: JSON.stringify(holding) }),
+  updateHolding: (id, changes) =>
+    req(`/holdings/${id}`, { method: "PATCH", body: JSON.stringify(changes) }),
+  deleteHolding: (id) => req(`/holdings/${id}`, { method: "DELETE" }),
   setStreamHidden: (streamId, hidden) =>
     req(`/recurring/${encodeURIComponent(streamId)}`, {
       method: "PATCH",

@@ -17,6 +17,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -346,6 +347,10 @@ class RecurringStream(Base):
     # Set from the UI: both this and the card it looks like are real, so
     # stop flagging them as a duplicate.
     not_duplicate: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Set from the UI: "debt" (a payment that ends once something is paid
+    # off), "essential" (a cost that stays) or "optional". Null guesses from
+    # the category. Sync never writes it.
+    commitment: Mapped[str | None] = mapped_column(String, nullable=True)
 
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -438,6 +443,66 @@ class Bill(Base):
         onupdate=func.now(),
         nullable=False,
     )
+
+
+class Holding(Base):
+    """Something owned or owed that is not linked: the home, the car, a
+    retirement account, the mortgage, a loan at a lender Plaid cannot reach.
+
+    ``value`` is the latest figure, positive either way: what an asset is
+    worth, what a debt has left to pay. Every figure entered is also kept in
+    holding_values with its date, for the net worth history.
+    """
+
+    __tablename__ = "holdings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    # "asset" | "debt"
+    kind: Mapped[str] = mapped_column(String, nullable=False)
+    # home | vehicle | retirement | investment | cash | other (assets);
+    # mortgage | auto_loan | student_loan | personal_loan | other (debts)
+    category: Mapped[str] = mapped_column(String, nullable=False)
+    value: Mapped[Decimal] = mapped_column(Money, nullable=False)
+    as_of: Mapped[date] = mapped_column(Date, nullable=False)
+    # A debt: the asset it is secured on, the mortgage's home, so the
+    # equity in it can be shown.
+    secured_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("holdings.id", ondelete="SET NULL"), nullable=True
+    )
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    values: Mapped[list["HoldingValue"]] = relationship(
+        back_populates="holding",
+        cascade="all, delete-orphan",
+        order_by="HoldingValue.as_of",
+    )
+
+
+class HoldingValue(Base):
+    """One dated figure for a holding; the latest on or before a date is
+    what it was worth then."""
+
+    __tablename__ = "holding_values"
+    __table_args__ = (UniqueConstraint("holding_id", "as_of"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    holding_id: Mapped[int] = mapped_column(
+        ForeignKey("holdings.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    as_of: Mapped[date] = mapped_column(Date, nullable=False)
+    value: Mapped[Decimal] = mapped_column(Money, nullable=False)
+
+    holding: Mapped[Holding] = relationship(back_populates="values")
 
 
 class OAuthToken(Base):
