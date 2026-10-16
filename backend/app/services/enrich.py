@@ -253,6 +253,7 @@ def _stream_values(stream: dict, item_id: str, direction: str) -> dict:
         status=str(stream.get("status")) if stream.get("status") else None,
         category_primary=pfc.get("primary"),
         category_detailed=pfc.get("detailed"),
+        transaction_ids=list(stream.get("transaction_ids") or []),
     )
 
 

@@ -296,6 +296,9 @@ async def build_ledger(session: AsyncSession, today: date, days: int) -> LedgerR
             entry.from_key = cash_key(p.pay_from_account_id)
         if p.source == "card" and p.ref_id in books:
             entry.to_key = p.ref_id
+        elif p.pays_account_id in books:
+            # A detected payment kept in place of a card's own row.
+            entry.to_key = p.pays_account_id
         elif p.source == "bill" and f"bill:{p.ref_id}" in books:
             entry.to_key = f"bill:{p.ref_id}"
         entries.append(((p.due_date, 0), entry))

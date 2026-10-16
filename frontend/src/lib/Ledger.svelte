@@ -68,6 +68,21 @@
     );
   }
 
+  // A detected payment and a linked card's own payment that look like the
+  // same money: keep one (hiding the other) or both.
+  function keepThis(p) {
+    onAct(() =>
+      p.source === "card"
+        ? api.updateStream(p.duplicate_ref_id, { hidden: true })
+        : api.updateAccount(p.duplicate_ref_id, { payment_hidden: true })
+    );
+  }
+
+  function keepBoth(p) {
+    const streamId = p.source === "recurring" ? p.ref_id : p.duplicate_ref_id;
+    onAct(() => api.updateStream(streamId, { not_duplicate: true }));
+  }
+
   const isDebt = (key) => books[key]?.kind === "debt";
   const neg = (key, bal) => bal != null && !isDebt(key) && Number(bal) < 0;
   const same = (a, b) => a != null && b != null && Number(a) === Number(b);
@@ -143,7 +158,7 @@
       <tbody>
         {#each ledger?.entries ?? [] as e, i (`${e.kind}-${e.payment?.source ?? ""}-${e.payment?.ref_id ?? e.inflow?.stream_id ?? e.name}-${e.date}-${i}`)}
           {@const p = e.payment}
-          <tr class:payday={e.kind === "paycheck"} class:inflow={e.kind === "paycheck" || e.kind === "transfer"} class:earmark={e.kind === "earmark"} class:overdue={p?.overdue} class:paid={p?.paid}>
+          <tr class:payday={e.kind === "paycheck"} class:inflow={e.kind === "paycheck" || e.kind === "transfer"} class:earmark={e.kind === "earmark"} class:overdue={p?.overdue} class:paid={p?.paid} class:dup={p?.duplicate_ref_id}>
             <td class="when">
               <span>{fmtDate(e.date)}</span>
               <span class="rel">{p?.paid ? "paid" : relative(e.date)}</span>
@@ -158,6 +173,17 @@
                 {#if p?.source === "card"}<span class="tag">card</span>{/if}
                 {#if p?.source === "recurring"}<span class="tag" title="Detected by Plaid from past payments">detected</span>{/if}
                 {#if p?.autopay}<span class="tag">autopay</span>{/if}
+                {#if p?.duplicate_ref_id}
+                  <span
+                    class="tag dup-tag"
+                    title={p.source === "recurring"
+                      ? `Its past payments from checking match payments ${p.duplicate_name} received, so it may be the same money counted twice.`
+                      : `A detected payment from checking, ${p.duplicate_name}, matches this card's past payments, so it may be the same money counted twice.`}
+                  >possible duplicate of {p.duplicate_name}</span>
+                  <button class="small" title="Keep this row and hide {p.duplicate_name}" onclick={() => keepThis(p)}>Keep this</button>
+                  <button class="small ghost" title="Both are real payments; stop flagging them" onclick={() => keepBoth(p)}>Keep both</button>
+                {/if}
+                {#if p?.pays_account_id}<span class="tag" title="Kept in place of the card's own payment row">pays {books[p.pays_account_id]?.name ?? "card"}</span>{/if}
                 {#if p && p.source !== "recurring" && accounts.length}
                   <select
                     class="payfrom"
@@ -402,6 +428,13 @@
   }
   tr.earmark td {
     background: color-mix(in srgb, var(--accent) 6%, transparent);
+  }
+  tr.dup td {
+    background: color-mix(in srgb, var(--warn) 8%, transparent);
+  }
+  .tag.dup-tag {
+    color: var(--warn);
+    border-color: var(--warn);
   }
   .tag.earmark-tag {
     color: var(--accent);

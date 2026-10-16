@@ -87,6 +87,7 @@ class AccountOut(BaseModel):
     apr_override: Decimal | None = None
     autopay_amount: Decimal | None = None
     payment_amount: Decimal | None = None
+    payment_hidden: bool = False
     promo_apr: Decimal | None = None
     promo_ends_on: date | None = None
     promo_balance: Decimal | None = None
@@ -111,6 +112,7 @@ class RecurringStreamOut(BaseModel):
     is_active: bool
     hidden: bool
     amount_override: Decimal | None = None
+    not_duplicate: bool = False
     status: str | None = None
     category_primary: str | None = None
     category_detailed: str | None = None
@@ -133,6 +135,9 @@ class AccountUpdate(BaseModel):
     # What to plan on paying each month, in place of the minimum or autopay;
     # null goes back to those.
     payment_amount: Decimal | None = Field(default=None, ge=0)
+    # Leave the card's own payment off the timeline, a detected payment from
+    # checking standing for it instead.
+    payment_hidden: bool | None = None
     promo_apr: Decimal | None = Field(default=None, ge=0, le=100)
     promo_ends_on: date | None = None
     promo_balance: Decimal | None = Field(default=None, ge=0)
@@ -145,6 +150,8 @@ class RecurringStreamUpdate(BaseModel):
     hidden: bool | None = None
     # The amount to plan with in place of Plaid's average; null clears it.
     amount_override: Decimal | None = Field(default=None, ge=0)
+    # True: this and the linked card it looks like are both real payments.
+    not_duplicate: bool | None = None
 
 
 # --- Bills and debts -------------------------------------------------------
@@ -265,6 +272,15 @@ class UpcomingPayment(BaseModel):
     pay_from_name: str | None = None
     # Set for a bill kept up to date by sync, e.g. "longmont".
     synced_from: str | None = None
+    # Possibly the same payment as another row: a detected payment from
+    # checking that matches a linked card's payments, flagged on both. The
+    # other row's source, ref_id and name.
+    duplicate_source: Literal["card", "recurring"] | None = None
+    duplicate_ref_id: str | None = None
+    duplicate_name: str | None = None
+    # A detected payment kept in place of a card's own payment row: the card
+    # it pays down.
+    pays_account_id: str | None = None
 
 
 class UpcomingResponse(BaseModel):

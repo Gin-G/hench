@@ -182,6 +182,9 @@ def _card_payments(
         liability = account.liability
         if liability is None or liability.next_payment_due_date is None:
             continue
+        if account.payment_hidden:
+            # A detected payment from checking stands for it instead.
+            continue
         due = liability.next_payment_due_date
         # A fixed monthly figure, the user's or the bank's autopay, is known
         # months ahead; a minimum is not.
@@ -271,6 +274,80 @@ def _card_payments(
             )
             remaining -= amount
     return payments
+
+
+# How far apart the two sides of one payment can post: checking a day or two
+# after the card, or before it.
+_SAME_PAYMENT_WITHIN = 4
+
+
+async def _paid_cards(
+    session: AsyncSession, streams: list[RecurringStream], accounts: dict[str, Account]
+) -> dict[str, str]:
+    """Detected payments that are a linked card's or loan's own payments.
+
+    A stream seen leaving a bank account is matched, transaction by
+    transaction, against the payments the linked cards received: the same
+    amount to the cent within a few days. Chase pays all its cards from one
+    autopay, so the card that most of a stream's payments landed on wins,
+    and it takes two matches, or every one there is, to count.
+
+    Returns stream_id -> the card's account_id.
+    """
+    cards = [
+        a.account_id
+        for a in accounts.values()
+        if a.type in _DEBT_TYPES and a.in_plan and a.liability is not None
+    ]
+    candidates = [
+        s
+        for s in streams
+        if s.transaction_ids
+        and not s.not_duplicate
+        and getattr(accounts.get(s.account_id), "type", None) == "depository"
+    ]
+    if not cards or not candidates:
+        return {}
+    ids = [tid for s in candidates for tid in s.transaction_ids]
+    paid_out = {
+        tid: (on, Decimal(amount))
+        for tid, on, amount in (
+            await session.execute(
+                select(Transaction.transaction_id, Transaction.date, Transaction.amount)
+                .where(Transaction.transaction_id.in_(ids), Transaction.amount > 0)
+            )
+        ).all()
+    }
+    if not paid_out:
+        return {}
+    earliest = min(on for on, _ in paid_out.values()) - timedelta(days=_SAME_PAYMENT_WITHIN)
+    received = (
+        await session.execute(
+            select(Transaction.account_id, Transaction.date, Transaction.amount).where(
+                Transaction.account_id.in_(cards),
+                Transaction.amount < 0,
+                Transaction.date >= earliest,
+            )
+        )
+    ).all()
+    matches: dict[str, str] = {}
+    for stream in candidates:
+        own = [paid_out[t] for t in stream.transaction_ids if t in paid_out]
+        tally: dict[str, int] = {}
+        for on, amount in own:
+            for card, landed, credit in received:
+                if (
+                    -Decimal(credit) == amount
+                    and abs((landed - on).days) <= _SAME_PAYMENT_WITHIN
+                ):
+                    tally[card] = tally.get(card, 0) + 1
+                    break
+        if not tally:
+            continue
+        card, n = max(tally.items(), key=lambda kv: kv[1])
+        if n >= 2 or n == len(own):
+            matches[stream.stream_id] = card
+    return matches
 
 
 def _is_loan_payment(stream: RecurringStream) -> bool:
@@ -384,6 +461,28 @@ async def build_upcoming(
         if p.pay_from_account_id not in excluded
         and not (p.source == "card" and p.ref_id in excluded)
     ]
+
+    # A detected payment that is a linked card's own payment, seen from
+    # checking, counts it twice. Flag both rows so the user keeps one; once
+    # the card's own row is hidden, the stream is what pays the card down.
+    paid_cards = await _paid_cards(session, streams, by_id)
+    card_rows = {p.ref_id: p for p in payments if p.source == "card"}
+    for p in payments:
+        card_id = paid_cards.get(p.ref_id) if p.source == "recurring" else None
+        if card_id is None or card_id in excluded:
+            continue
+        card = by_id[card_id]
+        if card.payment_hidden:
+            p.pays_account_id = card_id
+            continue
+        p.duplicate_source, p.duplicate_ref_id, p.duplicate_name = (
+            "card", card_id, account_label(card)
+        )
+        row = card_rows.get(card_id)
+        if row is not None and row.duplicate_ref_id is None:
+            row.duplicate_source, row.duplicate_ref_id, row.duplicate_name = (
+                "recurring", p.ref_id, p.name
+            )
     payments.sort(key=lambda p: (p.due_date, p.name.lower()))
 
     # Card-charged payments are already inside that card's own payment.

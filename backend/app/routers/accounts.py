@@ -105,8 +105,8 @@ async def update_account(
     rate_fields = {
         k: v
         for k, v in changes.items()
-        if k in ("apr_override", "autopay_amount", "payment_amount", "promo_apr",
-                 "promo_ends_on", "promo_balance", "promo_deferred_interest")
+        if k in ("apr_override", "autopay_amount", "payment_amount", "payment_hidden",
+                 "promo_apr", "promo_ends_on", "promo_balance", "promo_deferred_interest")
     }
     if rate_fields:
         if account.type not in ("credit", "loan"):
@@ -114,8 +114,9 @@ async def update_account(
                 status_code=422, detail="Rates, autopay and promos are for cards and loans"
             )
         for field, value in rate_fields.items():
-            # The deferred-interest flag cannot be null, only turned off.
-            setattr(account, field, bool(value) if field == "promo_deferred_interest" else value)
+            # Flags cannot be null, only turned off.
+            flag = field in ("promo_deferred_interest", "payment_hidden")
+            setattr(account, field, bool(value) if flag else value)
     await session.flush()
     return _account_out(account, institution_name)
 
@@ -167,6 +168,8 @@ async def update_recurring(
         stream.hidden = body.hidden
     if "amount_override" in changes:
         stream.amount_override = body.amount_override
+    if changes.get("not_duplicate") is not None:
+        stream.not_duplicate = body.not_duplicate
     await session.flush()
     await session.refresh(stream)
     return stream

@@ -101,6 +101,10 @@ class Account(Base):
     # figure only: whether a payment was made is still read from the synced
     # transactions. Set from the UI; sync never writes it.
     payment_amount: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    # Credit and loan accounts: leave this card's own payment off the
+    # timeline, because a detected payment from checking already stands for
+    # it. Its balance is still tracked. Set from the UI; sync never writes it.
+    payment_hidden: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # --- Promotional rate, entered by hand ---------------------------------
     # Plaid reports APRs but not when a promo ends. While promo_ends_on has
     # not passed, promo_apr applies to promo_balance (null = the whole
@@ -336,6 +340,12 @@ class RecurringStream(Base):
     # for a loan payment Plaid only sees from the paying side. Sync never
     # writes it.
     amount_override: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    # The transactions Plaid built the stream from, to tell when it is a
+    # linked card's own payment seen from the paying side.
+    transaction_ids: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # Set from the UI: both this and the card it looks like are real, so
+    # stop flagging them as a duplicate.
+    not_duplicate: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

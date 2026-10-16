@@ -31,6 +31,8 @@
   // Detected streams the user hid from the timeline.
   let hidden = $state([]);
   let showHidden = $state(false);
+  // Cards whose own payment row is hidden in favour of a detected payment.
+  let hiddenCards = $derived((accounts ?? []).filter((a) => a.payment_hidden));
 
   async function load() {
     error = null;
@@ -298,13 +300,22 @@
   {/if}
 </section>
 
-{#if hidden.length}
+{#if hidden.length || hiddenCards.length}
   <section class="panel hidden-panel">
     <button class="link" onclick={() => (showHidden = !showHidden)}>
-      {showHidden ? "▾" : "▸"} Hidden detected payments and transfers ({hidden.length})
+      {showHidden ? "▾" : "▸"} Hidden payments and transfers ({hidden.length + hiddenCards.length})
     </button>
     {#if showHidden}
       <ul class="hidden-list">
+        {#each hiddenCards as a (a.account_id)}
+          <li>
+            <span>{a.nickname || a.name}{a.mask && !a.nickname ? ` ••${a.mask}` : ""}</span>
+            <span class="muted">card's own payment</span>
+            <button class="small" onclick={() => act(() => api.updateAccount(a.account_id, { payment_hidden: false }))}>
+              Unhide
+            </button>
+          </li>
+        {/each}
         {#each hidden as h (h.stream_id)}
           <li>
             <span>{h.merchant_name || h.description}</span>
