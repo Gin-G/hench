@@ -30,7 +30,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import Account, Bill, RecurringStream
+from ..models import Account, Bill, RecurringStream, Transaction
 from ..schemas import LedgerAccount, LedgerEntry, LedgerResponse, Paycheck
 from .bills import account_label, build_upcoming, clean_name
 from .schedule import PLAID_FREQUENCIES, occurrences
@@ -69,6 +69,49 @@ def _is_transfer_in(stream: RecurringStream, accounts: dict[str, Account]) -> bo
     )
 
 
+# How early a deposit can land and still be the one Plaid predicted.
+_EARLY_BY = timedelta(days=4)
+
+
+async def _already_landed(
+    session: AsyncSession,
+    stream: RecurringStream,
+    account: Account | None,
+    on: date,
+    today: date,
+) -> bool:
+    """Whether a deposit predicted for ``on`` is already in the balance.
+
+    Plaid keeps predicting a deposit until its transaction posts, which can
+    trail the money itself by a day or more. Either sign means it is here:
+    the deposit has posted in the last few days, or, on the day itself, the
+    bank shows money pending in — available above current, as Chase does
+    with a paycheck it has not yet posted. Counting it again would add the
+    same paycheck to the balance twice.
+    """
+    name = clean_name(stream.description or "")
+    if name:
+        posted = await session.scalar(
+            select(Transaction.transaction_id)
+            .where(
+                Transaction.account_id == stream.account_id,
+                Transaction.amount < 0,
+                Transaction.date >= on - _EARLY_BY,
+                Transaction.name.ilike(f"{name}%"),
+            )
+            .limit(1)
+        )
+        if posted is not None:
+            return True
+    return bool(
+        account is not None
+        and on == today
+        and account.available_balance is not None
+        and account.current_balance is not None
+        and account.available_balance > account.current_balance
+    )
+
+
 async def _inflows(
     session: AsyncSession, accounts: dict[str, Account], today: date, end: date
 ) -> tuple[list[Paycheck], list[Paycheck]]:
@@ -103,6 +146,10 @@ async def _inflows(
         account = accounts.get(stream.account_id)
         for on in occurrences(stream.predicted_next_date, frequency, end):
             if on < today:
+                continue
+            if on <= today + _EARLY_BY and await _already_landed(
+                session, stream, account, on, today
+            ):
                 continue
             into.append(
                 Paycheck(
