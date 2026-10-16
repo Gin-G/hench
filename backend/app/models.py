@@ -96,12 +96,11 @@ class Account(Base):
     # autopay. It stands in for the minimum (whichever is larger) on the
     # timeline and in promo payoff maths. Set from the UI; sync never writes it.
     autopay_amount: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
-    # Credit and loan accounts: what the user means to pay this cycle, in
-    # place of the minimum or autopay — $200, say, or the whole balance. Only
-    # counts while payment_due is still the card's due date, so a new
-    # statement lets it lapse. Set from the UI; sync never writes it.
+    # Credit and loan accounts: what the user plans to pay each month, in
+    # place of the minimum or autopay, until they change it. A planning
+    # figure only: whether a payment was made is still read from the synced
+    # transactions. Set from the UI; sync never writes it.
     payment_amount: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
-    payment_due: Mapped[date | None] = mapped_column(Date, nullable=True)
     # --- Promotional rate, entered by hand ---------------------------------
     # Plaid reports APRs but not when a promo ends. While promo_ends_on has
     # not passed, promo_apr applies to promo_balance (null = the whole
@@ -333,6 +332,10 @@ class RecurringStream(Base):
     # charges, one-off purchases Plaid mistook for a pattern, and the like.
     # Sync never writes it, so a hidden stream stays hidden.
     hidden: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Set from the UI: the amount to plan with in place of Plaid's average,
+    # for a loan payment Plaid only sees from the paying side. Sync never
+    # writes it.
+    amount_override: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
 
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

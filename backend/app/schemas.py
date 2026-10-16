@@ -87,7 +87,6 @@ class AccountOut(BaseModel):
     apr_override: Decimal | None = None
     autopay_amount: Decimal | None = None
     payment_amount: Decimal | None = None
-    payment_due: date | None = None
     promo_apr: Decimal | None = None
     promo_ends_on: date | None = None
     promo_balance: Decimal | None = None
@@ -111,6 +110,7 @@ class RecurringStreamOut(BaseModel):
     predicted_next_date: date | None = None
     is_active: bool
     hidden: bool
+    amount_override: Decimal | None = None
     status: str | None = None
     category_primary: str | None = None
     category_detailed: str | None = None
@@ -130,8 +130,8 @@ class AccountUpdate(BaseModel):
     apr_override: Decimal | None = Field(default=None, ge=0, le=100)
     # Fixed monthly autopay; null means the bank pays the minimum.
     autopay_amount: Decimal | None = Field(default=None, gt=0)
-    # What to pay this cycle, in place of the minimum or autopay; null goes
-    # back to those. Applies to the card's current due date only.
+    # What to plan on paying each month, in place of the minimum or autopay;
+    # null goes back to those.
     payment_amount: Decimal | None = Field(default=None, ge=0)
     promo_apr: Decimal | None = Field(default=None, ge=0, le=100)
     promo_ends_on: date | None = None
@@ -140,7 +140,11 @@ class AccountUpdate(BaseModel):
 
 
 class RecurringStreamUpdate(BaseModel):
-    hidden: bool
+    """Partial update: only the fields sent are changed."""
+
+    hidden: bool | None = None
+    # The amount to plan with in place of Plaid's average; null clears it.
+    amount_override: Decimal | None = Field(default=None, ge=0)
 
 
 # --- Bills and debts -------------------------------------------------------
@@ -232,13 +236,12 @@ class UpcomingPayment(BaseModel):
     due_date: date
     amount: Decimal | None = None
     # "minimum" for card minimums, "autopay" for a card's fixed autopay,
-    # "chosen" for an amount picked for this cycle, "average" for a detected
-    # stream's typical amount; null when the amount is the bill's own figure.
-    amount_basis: Literal["minimum", "autopay", "chosen", "average"] | None = None
+    # "planned" for an amount the user set to plan with, "average" for a
+    # detected stream's typical amount; null when it is the bill's own figure.
+    amount_basis: Literal["minimum", "autopay", "planned", "average"] | None = None
+    # A card or loan payment whose amount can be set from its row.
+    editable: bool = False
     statement_balance: Decimal | None = None
-    # Cards only, for choosing what to pay: the minimum and what is owed now.
-    minimum_payment: Decimal | None = None
-    balance: Decimal | None = None
     autopay: bool | None = None
     overdue: bool = False
     # A card already paid this cycle — Plaid keeps showing the old due date

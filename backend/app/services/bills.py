@@ -158,9 +158,12 @@ async def _card_credits(
 
 
 def planned_payment(account: Account) -> Decimal | None:
-    """What a card or loan is paid each month: a fixed autopay or the
-    minimum, whichever is larger. The bank never pulls less than the minimum.
+    """What a card or loan is planned to be paid each month: the user's own
+    figure where set, else a fixed autopay or the minimum, whichever is
+    larger — the bank never pulls less than the minimum.
     """
+    if account.payment_amount is not None:
+        return account.payment_amount
     liability = account.liability
     minimum = liability.minimum_payment_amount if liability else None
     if account.autopay_amount is None:
@@ -180,37 +183,46 @@ def _card_payments(
         if liability is None or liability.next_payment_due_date is None:
             continue
         due = liability.next_payment_due_date
-        autopay = account.autopay_amount
-        # Autopay never pulls more than is owed.
+        # A fixed monthly figure, the user's or the bank's autopay, is known
+        # months ahead; a minimum is not.
+        monthly = (
+            account.payment_amount
+            if account.payment_amount is not None
+            else account.autopay_amount
+        )
+        # Never more than is owed.
         owed = max(account.current_balance or ZERO, ZERO)
-        target = planned_payment(account) or ZERO
-        if autopay is not None:
+        target = planned_payment(account)
+        if target is not None and monthly is not None:
             target = min(target, owed)
+        if account.payment_amount is not None:
+            basis = "planned"
+        elif account.autopay_amount is not None:
+            basis = "autopay"
+        else:
+            basis = "minimum"
         common = dict(
             source="card",
             ref_id=account.account_id,
             name=account_label(account),
-            amount_basis="autopay" if autopay is not None else "minimum",
-            autopay=True if autopay is not None else None,
+            amount_basis=basis,
+            editable=True,
+            autopay=True if account.autopay_amount is not None else None,
             account=account.item.institution_name,
-            minimum_payment=liability.minimum_payment_amount,
-            balance=owed,
             **pay_from(account.pay_from_account_id, accounts),
         )
-        # An amount chosen for this cycle wins over the minimum or autopay,
-        # for this due date only.
-        chosen = account.payment_amount if account.payment_due == due else None
         # Plaid leaves the old due date in place until the next statement
         # closes. A past date that Plaid does not flag as overdue is therefore
         # almost always a cycle already paid, not a missed payment.
         settled = due < today and not liability.is_overdue
         still_due = ZERO
         if not settled and due <= end:
-            # Payments posted to the card since the statement was issued count
-            # toward this cycle. Some banks (Barclays, for one) report the last
-            # payment's amount but never its date, so the card's own
-            # transactions are the dependable signal; the bank's date is used
-            # where given, unless an autopay amount says how much is coming.
+            # Whether it is paid comes from the synced transactions alone:
+            # payments posted to the card since the statement was issued.
+            # Some banks (Barclays, for one) report the last payment's amount
+            # but never its date, so the card's own transactions are the
+            # dependable signal; the bank's date is used where given, unless
+            # a fixed monthly figure says how much is coming.
             since = liability.last_statement_issue_date or (due - _NO_STATEMENT_LOOKBACK)
             cycle = [
                 (on, amt)
@@ -218,29 +230,21 @@ def _card_payments(
                 if on > since
             ]
             paid_amount = sum((amt for _, amt in cycle), ZERO) or None
-            if chosen is not None:
-                target = chosen
-            paid = bool(paid_amount and paid_amount >= target)
-            if autopay is None and chosen is None:
+            paid = bool(paid_amount and paid_amount >= (target or ZERO))
+            if monthly is None:
                 paid = paid or bool(
                     liability.last_payment_date
                     and liability.last_statement_issue_date
                     and liability.last_payment_date >= liability.last_statement_issue_date
                 )
             # Part of it already paid: only the rest is still due.
-            amount = (
-                target
-                if chosen is not None
-                or autopay is not None
-                or liability.minimum_payment_amount is not None
-                else None
-            )
+            amount = target
             if amount is not None and paid_amount and not paid:
                 amount = amount - paid_amount
             still_due = ZERO if paid or amount is None else amount
             payments.append(
                 UpcomingPayment(
-                    **{**common, **({"amount_basis": "chosen"} if chosen is not None else {})},
+                    **common,
                     due_date=due,
                     amount=amount,
                     statement_balance=liability.last_statement_balance,
@@ -250,16 +254,16 @@ def _card_payments(
                     paid_date=cycle[0][0] if cycle else None,
                 )
             )
-        if autopay is None:
+        if monthly is None:
             continue
-        # A fixed autopay is known months ahead, unlike a minimum, so the
-        # months after this one are projected too, until what is owed now is
-        # paid off. New charges would add to that, but are not guessed at.
+        # The months after this one are projected at the same figure until
+        # what is owed now is paid off. New charges would add to that, but
+        # are not guessed at.
         remaining = owed - still_due
         for on in occurrences(due, "monthly", end, due.day):
             if on <= due or on < today:
                 continue
-            amount = min(autopay, remaining)
+            amount = min(monthly, remaining)
             if amount <= 0:
                 break
             payments.append(
@@ -267,6 +271,14 @@ def _card_payments(
             )
             remaining -= amount
     return payments
+
+
+def _is_loan_payment(stream: RecurringStream) -> bool:
+    # Mortgages, student and personal loans, and payments to cards that are
+    # not linked: all filed under LOAN_PAYMENTS.
+    return stream.category_primary == "LOAN_PAYMENTS" or (
+        stream.category_detailed or ""
+    ).startswith("LOAN_PAYMENTS")
 
 
 def _stream_payments(
@@ -294,8 +306,17 @@ def _stream_payments(
                     ref_id=stream.stream_id,
                     name=clean_name(stream.merchant_name or stream.description or "Recurring"),
                     due_date=due,
-                    amount=stream.average_amount,
-                    amount_basis="average",
+                    amount=(
+                        stream.amount_override
+                        if stream.amount_override is not None
+                        else stream.average_amount
+                    ),
+                    amount_basis=(
+                        "planned" if stream.amount_override is not None else "average"
+                    ),
+                    # A loan payment Plaid sees only from the paying side —
+                    # a mortgage, a student loan — is planned like a card's.
+                    editable=_is_loan_payment(stream),
                     account=(
                         account_label(accounts[stream.account_id])
                         if stream.account_id in accounts

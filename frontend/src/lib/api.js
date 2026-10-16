@@ -95,6 +95,12 @@ export const api = {
     req("/recurring?include_hidden=true").then((streams) =>
       streams.filter((s) => s.hidden)
     ),
+  // Hide a detected stream, or set the amount to plan with (null clears).
+  updateStream: (streamId, changes) =>
+    req(`/recurring/${encodeURIComponent(streamId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(changes),
+    }),
   setStreamHidden: (streamId, hidden) =>
     req(`/recurring/${encodeURIComponent(streamId)}`, {
       method: "PATCH",
