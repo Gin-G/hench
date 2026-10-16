@@ -148,7 +148,7 @@
       <thead>
         <tr>
           <th>Date</th>
-          <th>Item</th>
+          <th class="grow">Item</th>
           <th class="num">Amount</th>
           <th>From · before → after</th>
           <th>Paid to · before → after</th>
@@ -367,6 +367,15 @@
     padding: 0.45rem 0.6rem;
     border-bottom: 1px solid var(--panel-2);
     vertical-align: middle;
+  }
+  /* The text column takes the spare width on a wide screen, so the figures
+     stay together instead of spreading across it. */
+  th.grow {
+    width: 100%;
+  }
+  td.acct,
+  td.when {
+    white-space: nowrap;
   }
   tr.paid {
     opacity: 0.5;

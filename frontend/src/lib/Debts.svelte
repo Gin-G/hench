@@ -101,7 +101,7 @@
       <thead>
         <tr>
           <th>#</th>
-          <th>Debt</th>
+          <th class="grow">Debt</th>
           <th class="num">Rate now</th>
           <th>Promo</th>
           <th class="num">Balance</th>
@@ -277,6 +277,12 @@
     border-bottom: 1px solid var(--panel-2);
     vertical-align: top;
   }
+  /* The text column takes the spare width on a wide screen, so the figures
+     stay together instead of spreading across it. */
+  th.grow {
+    width: 100%;
+  }
+
   tr.target td {
     background: color-mix(in srgb, var(--accent-dim) 45%, transparent);
   }
@@ -304,7 +310,9 @@
   }
   .promo {
     font-size: 0.85rem;
-    min-width: 11rem;
+    /* Room for the payoff notes on one or two lines, now that the Debt
+       column takes the spare width. */
+    min-width: 17rem;
   }
   .num {
     text-align: right;

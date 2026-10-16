@@ -69,7 +69,7 @@
     <thead>
       <tr>
         <th>Date</th>
-        <th>Name</th>
+        <th class="grow">Name</th>
         <th class="num">Amount</th>
         <th>Category</th>
       </tr>
@@ -143,11 +143,18 @@
     font-weight: 600;
     padding: 0.5rem 0.6rem;
     border-bottom: 1px solid var(--border);
+    white-space: nowrap;
   }
   td {
     padding: 0.45rem 0.6rem;
     border-bottom: 1px solid var(--panel-2);
   }
+  /* The text column takes the spare width on a wide screen, so the figures
+     stay together instead of spreading across it. */
+  th.grow {
+    width: 100%;
+  }
+
   td.date {
     color: var(--muted);
     white-space: nowrap;
@@ -174,6 +181,7 @@
     padding: 0.2rem 0.55rem;
     border-radius: 999px;
     font-size: 0.82rem;
+    white-space: nowrap;
   }
   .dot {
     color: var(--accent);

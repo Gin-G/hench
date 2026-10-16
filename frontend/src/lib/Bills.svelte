@@ -246,7 +246,7 @@
     <table>
       <thead>
         <tr>
-          <th>Name</th>
+          <th class="grow">Name</th>
           <th class="num">Amount</th>
           <th>Repeats</th>
           <th>Next due</th>
@@ -273,7 +273,7 @@
               </td>
               <td class="num">{b.amount != null ? fmtMoney(b.amount) : b.source && !b.active ? "—" : "varies"}</td>
               <td>{b.frequency}</td>
-              <td>
+              <td class="due">
                 {#if b.source && !b.active}
                   <span class="muted">waiting for first read</span>
                 {:else}
@@ -567,11 +567,21 @@
     font-weight: 600;
     padding: 0.5rem 0.6rem;
     border-bottom: 1px solid var(--border);
+    white-space: nowrap;
   }
   td {
     padding: 0.45rem 0.6rem;
     border-bottom: 1px solid var(--panel-2);
   }
+  /* The text column takes the spare width on a wide screen, so the figures
+     stay together instead of spreading across it. */
+  th.grow {
+    width: 100%;
+  }
+  td.due {
+    white-space: nowrap;
+  }
+
   .note {
     color: var(--muted);
     font-size: 0.78rem;
