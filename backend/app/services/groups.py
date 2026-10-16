@@ -1,5 +1,8 @@
 """Plaid's categories folded into a few groups for the cash-flow chart.
 
+Money in is split by source (paychecks, gambling winnings, the rest); money
+out by group and item, below.
+
 Plaid files spending under some 15 primary and 100-odd detailed categories,
 too many to read on one chart. Each detailed category maps to a group (the
 middle column) and an item within it (the right-hand column), named for
@@ -105,6 +108,28 @@ OTHER = {
     TRANSFERS: "Other Transfers",
     MISC: "Other",
 }
+
+
+PAYCHECKS = "Paychecks"
+WINNINGS = "Gambling Winnings"
+OTHER_INCOME = "Other Income"
+# Order of the income sources, top to bottom: the colour order too.
+INCOME_SOURCES = [PAYCHECKS, WINNINGS, OTHER_INCOME]
+_WAGES = {"INCOME_SALARY", "INCOME_WAGES"}
+
+
+def income_source_of(primary: str, detailed: str, name: str | None) -> str:
+    """Where money in came from, for the chart's left-hand column.
+
+    Payroll is Plaid's salary or wages category, or a deposit whose
+    description says payroll. Gambling winnings are filed by a rule (FanDuel
+    cash-outs). Everything else — interest, refunds, Venmo — is other income.
+    """
+    if detailed in _WAGES or "payroll" in (name or "").lower():
+        return PAYCHECKS
+    if primary == "GAMBLING_WINNINGS":
+        return WINNINGS
+    return OTHER_INCOME
 
 
 def group_of(primary: str, detailed: str) -> tuple[str, str]:

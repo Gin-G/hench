@@ -35,14 +35,15 @@
   }
 
   function nodeColors(links) {
-    // Level-1 targets (fed straight from Income) are categories; anything
-    // they feed is a subcategory and wears its parent's colour.
-    const parent = {};
-    for (const l of links) parent[l.target] = l.source;
+    // Groups are what Income feeds; the items they feed wear the group's
+    // colour. Income's sources, Income and the savings remainder are neutral.
+    const groups = new Set(
+      links.filter((l) => l.source === "Income" && !NEUTRAL_NODES.has(l.target)).map((l) => l.target)
+    );
     const colors = {};
+    for (const g of groups) colors[g] = categoryColor(g);
     for (const l of links) {
-      const cat = parent[l.target] && parent[parent[l.target]] ? parent[l.target] : l.target;
-      colors[l.target] = NEUTRAL_NODES.has(cat) ? NEUTRAL : categoryColor(cat);
+      if (groups.has(l.source)) colors[l.target] = colors[l.source];
     }
     return colors;
   }

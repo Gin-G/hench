@@ -1,4 +1,4 @@
-"""Build the monthly cash-flow Sankey: Income -> group -> item.
+"""Build the monthly cash-flow Sankey: source -> Income -> group -> item.
 
 Plaid amount sign convention: positive = money out (spending), negative =
 money in (income). The effective category resolves override > rule/PFC, and
@@ -25,7 +25,7 @@ from sqlalchemy.orm import selectinload
 
 from ..models import Account, Transaction
 from ..schemas import SankeyLink, SankeyNode, SankeyResponse
-from .groups import OTHER, group_of
+from .groups import INCOME_SOURCES, OTHER, group_of, income_source_of
 
 INCOME_NODE = "Income"
 SAVINGS_NODE = "Savings / Unspent"
@@ -134,6 +134,7 @@ async def build_sankey(session: AsyncSession, month: str) -> SankeyResponse:
 
     total_income = 0.0
     total_spending = 0.0
+    by_source: dict[str, float] = defaultdict(float)
     by_group: dict[str, float] = defaultdict(float)
     by_item: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
 
@@ -141,6 +142,7 @@ async def build_sankey(session: AsyncSession, month: str) -> SankeyResponse:
         amount = float(txn.amount)
         if amount < 0:  # money in
             total_income += -amount
+            by_source[income_source_of(*_effective(txn), txn.name)] += -amount
         elif amount > 0:  # money out
             total_spending += amount
             group, item = group_of(*_effective(txn))
@@ -148,11 +150,21 @@ async def build_sankey(session: AsyncSession, month: str) -> SankeyResponse:
             by_item[group][item] += amount
 
     links: list[SankeyLink] = []
-    node_names: list[str] = [INCOME_NODE]
+    node_names: list[str] = []
 
     def add_node(name: str) -> None:
         if name not in node_names:
             node_names.append(name)
+
+    # Where the money came from, in a fixed order so a source stays put
+    # from month to month.
+    for source in INCOME_SOURCES:
+        if by_source.get(source):
+            add_node(source)
+            links.append(
+                SankeyLink(source=source, target=INCOME_NODE, value=round(by_source[source], 2))
+            )
+    add_node(INCOME_NODE)
 
     for group, value in sorted(by_group.items(), key=lambda kv: kv[1], reverse=True):
         add_node(group)
