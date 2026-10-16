@@ -102,7 +102,9 @@ async def sync_xcel(session: AsyncSession, force: bool = False) -> str:
     bill = await session.scalar(select(Bill).where(Bill.source == SOURCE))
     now = datetime.now(timezone.utc)
     today = now.date()
-    if bill and bill.source_attempted_at and not force:
+    # Only a successful read holds off the next one: after a failure (say,
+    # Gmail just reconnected) the very next sync should try again.
+    if bill and bill.source_attempted_at and bill.source_error is None and not force:
         if now - bill.source_attempted_at < _MIN_INTERVAL:
             return "skipped: checked recently"
     if bill is None:
