@@ -111,6 +111,8 @@ export const api = {
 // Human-friendly label for Plaid's SCREAMING_SNAKE_CASE categories.
 export function prettyCategory(c) {
   if (!c) return "Uncategorized";
+  // Already a display name (the cash-flow groups and items), not a Plaid code.
+  if (/[a-z]/.test(c)) return c;
   return c
     .toLowerCase()
     .split("_")

@@ -14,15 +14,12 @@
   // neighbours, contrast) with the dataviz validator. Order matters: it is
   // what keeps the red-green pair apart.
   const PALETTE = ["#068fa7", "#d27830", "#7b62b8", "#ae8e38", "#c35775", "#4379bc", "#50a064", "#ab5637"];
-  // Colour follows the category, not this month's ranking, so a category
-  // keeps its colour from month to month. The commonest Plaid spending
-  // categories come first and get a slot each; rarer ones share, which the
-  // node labels (every node is named on the chart) make unambiguous.
+  // Colour follows the group, not this month's ranking, so a group keeps its
+  // colour from month to month. Eight groups, eight slots: the order of
+  // services/groups.py GROUPS.
   const CATEGORY_ORDER = [
-    "FOOD_AND_DRINK", "GENERAL_MERCHANDISE", "RENT_AND_UTILITIES", "LOAN_PAYMENTS",
-    "TRANSPORTATION", "ENTERTAINMENT", "GENERAL_SERVICES", "MEDICAL",
-    "PERSONAL_CARE", "HOME_IMPROVEMENT", "TRAVEL", "GOVERNMENT_AND_NON_PROFIT",
-    "BANK_FEES", "UNCATEGORIZED",
+    "Debt Payments", "Utilities", "Food", "Shopping",
+    "Transportation", "Insurance", "Transfers & Cash", "Misc.",
   ];
   // Income and the savings remainder are not spending categories. Names as
   // sent by services/sankey.py.
