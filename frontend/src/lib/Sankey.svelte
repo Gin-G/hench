@@ -15,11 +15,10 @@
   // what keeps the red-green pair apart.
   const PALETTE = ["#068fa7", "#d27830", "#7b62b8", "#ae8e38", "#c35775", "#4379bc", "#50a064", "#ab5637"];
   // Colour follows the group, not this month's ranking, so a group keeps its
-  // colour from month to month. Eight groups, eight slots: the order of
-  // services/groups.py GROUPS.
+  // colour from month to month: the order of services/groups.py GROUPS.
   const CATEGORY_ORDER = [
     "Debt Payments", "Utilities", "Food", "Shopping",
-    "Transportation", "Insurance", "Transfers & Cash", "Misc.",
+    "Transportation", "Transfers & Cash", "Misc.",
   ];
   // Income and the savings remainder are not spending categories. Names as
   // sent by services/sankey.py.

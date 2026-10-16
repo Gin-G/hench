@@ -12,7 +12,6 @@ from __future__ import annotations
 
 DEBT = "Debt Payments"
 UTILITIES = "Utilities"
-INSURANCE = "Insurance"
 FOOD = "Food"
 TRANSPORT = "Transportation"
 SHOPPING = "Shopping"
@@ -21,7 +20,7 @@ MISC = "Misc."
 
 # Biggest-first is decided per month; this is only the colour order, so a
 # group keeps its colour from month to month.
-GROUPS = [DEBT, UTILITIES, FOOD, SHOPPING, TRANSPORT, INSURANCE, TRANSFERS, MISC]
+GROUPS = [DEBT, UTILITIES, FOOD, SHOPPING, TRANSPORT, TRANSFERS, MISC]
 
 _DETAILED: dict[str, tuple[str, str]] = {
     # Debt
@@ -40,8 +39,8 @@ _DETAILED: dict[str, tuple[str, str]] = {
     "RENT_AND_UTILITIES_INTERNET_AND_CABLE": (UTILITIES, "Internet"),
     "RENT_AND_UTILITIES_TELEPHONE": (UTILITIES, "Phone"),
     "RENT_AND_UTILITIES_RENT": (UTILITIES, "Rent"),
-    # Insurance
-    "GENERAL_SERVICES_INSURANCE": (INSURANCE, "Insurance policies"),
+    # Insurance (Allstate) is a monthly bill like the rest.
+    "GENERAL_SERVICES_INSURANCE": (UTILITIES, "Insurance"),
     # Food
     "FOOD_AND_DRINK_GROCERIES": (FOOD, "Groceries"),
     "FOOD_AND_DRINK_RESTAURANT": (FOOD, "Restaurants"),
@@ -100,7 +99,6 @@ _PRIMARY: dict[str, tuple[str, str]] = {
 OTHER = {
     DEBT: "Other Debt",
     UTILITIES: "Other Utilities",
-    INSURANCE: "Other Insurance",
     FOOD: "Other Food",
     TRANSPORT: "Other Transportation",
     SHOPPING: "Other Shopping",
