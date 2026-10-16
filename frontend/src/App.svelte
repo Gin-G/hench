@@ -75,7 +75,7 @@
   </div>
 </header>
 
-<main>
+<main class:wide={view === "sankey"}>
   <div class="controls">
     <div class="tabs">
       <button class:active={view === "sankey"} onclick={() => (view = "sankey")}>
@@ -153,6 +153,11 @@
     max-width: 1100px;
     margin: 0 auto;
     padding: 1.5rem;
+  }
+  /* The cash-flow chart uses most of a big monitor; tables stay readable
+     at the narrower width. */
+  main.wide {
+    max-width: max(1100px, 90vw);
   }
   .controls {
     display: flex;

@@ -159,7 +159,8 @@
   }
   .chart {
     width: 100%;
-    height: 560px;
+    /* Taller as the screen allows, so the wider chart does not flatten. */
+    height: clamp(560px, 70vh, 1000px);
   }
   .totals {
     display: flex;
