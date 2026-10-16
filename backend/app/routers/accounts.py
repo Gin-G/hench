@@ -68,7 +68,8 @@ async def update_account(
     session: AsyncSession = Depends(get_session),
 ) -> AccountOut:
     """Rename an account; for a card or loan, pick the bank account that pays
-    it, override its APR, or record a promotional rate.
+    it, override its APR, set a fixed autopay amount, or record a promotional
+    rate.
 
     Those are the only edits; the rest is Plaid's.
     """
@@ -104,13 +105,13 @@ async def update_account(
     rate_fields = {
         k: v
         for k, v in changes.items()
-        if k in ("apr_override", "promo_apr", "promo_ends_on", "promo_balance",
-                 "promo_deferred_interest")
+        if k in ("apr_override", "autopay_amount", "promo_apr", "promo_ends_on",
+                 "promo_balance", "promo_deferred_interest")
     }
     if rate_fields:
         if account.type not in ("credit", "loan"):
             raise HTTPException(
-                status_code=422, detail="Rates and promos are for cards and loans"
+                status_code=422, detail="Rates, autopay and promos are for cards and loans"
             )
         for field, value in rate_fields.items():
             # The deferred-interest flag cannot be null, only turned off.

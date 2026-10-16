@@ -157,6 +157,17 @@ async def _card_credits(
     return credits
 
 
+def planned_payment(account: Account) -> Decimal | None:
+    """What a card or loan is paid each month: a fixed autopay or the
+    minimum, whichever is larger. The bank never pulls less than the minimum.
+    """
+    liability = account.liability
+    minimum = liability.minimum_payment_amount if liability else None
+    if account.autopay_amount is None:
+        return minimum
+    return max(account.autopay_amount, minimum or ZERO)
+
+
 def _card_payments(
     accounts: dict[str, Account],
     today: date,
@@ -169,47 +180,79 @@ def _card_payments(
         if liability is None or liability.next_payment_due_date is None:
             continue
         due = liability.next_payment_due_date
-        if due > end:
-            continue
+        autopay = account.autopay_amount
+        # Autopay never pulls more than is owed.
+        owed = max(account.current_balance or ZERO, ZERO)
+        target = planned_payment(account) or ZERO
+        if autopay is not None:
+            target = min(target, owed)
+        common = dict(
+            source="card",
+            ref_id=account.account_id,
+            name=account_label(account),
+            amount_basis="autopay" if autopay is not None else "minimum",
+            autopay=True if autopay is not None else None,
+            account=account.item.institution_name,
+            **pay_from(account.pay_from_account_id, accounts),
+        )
         # Plaid leaves the old due date in place until the next statement
         # closes. A past date that Plaid does not flag as overdue is therefore
         # almost always a cycle already paid, not a missed payment.
-        if due < today and not liability.is_overdue:
-            continue
-        # Payments posted to the card since the statement was issued count
-        # toward this cycle. Some banks (Barclays, for one) report the last
-        # payment's amount but never its date, so the card's own transactions
-        # are the dependable signal; the bank's date is used where given.
-        since = liability.last_statement_issue_date or (due - _NO_STATEMENT_LOOKBACK)
-        cycle = [(on, amt) for on, amt in (credits or {}).get(account.account_id, []) if on > since]
-        paid_amount = sum((amt for _, amt in cycle), Decimal("0")) or None
-        minimum = liability.minimum_payment_amount or Decimal("0")
-        paid = bool(paid_amount and paid_amount >= minimum) or bool(
-            liability.last_payment_date
-            and liability.last_statement_issue_date
-            and liability.last_payment_date >= liability.last_statement_issue_date
-        )
-        # Part of the minimum already paid: only the rest is still due.
-        still_due = liability.minimum_payment_amount
-        if still_due is not None and paid_amount and not paid:
-            still_due = still_due - paid_amount
-        payments.append(
-            UpcomingPayment(
-                source="card",
-                ref_id=account.account_id,
-                name=account_label(account),
-                due_date=due,
-                amount=still_due,
-                amount_basis="minimum",
-                statement_balance=liability.last_statement_balance,
-                overdue=bool(liability.is_overdue) and not paid,
-                paid=paid,
-                paid_amount=paid_amount,
-                paid_date=cycle[0][0] if cycle else None,
-                account=account.item.institution_name,
-                **pay_from(account.pay_from_account_id, accounts),
+        settled = due < today and not liability.is_overdue
+        still_due = ZERO
+        if not settled and due <= end:
+            # Payments posted to the card since the statement was issued count
+            # toward this cycle. Some banks (Barclays, for one) report the last
+            # payment's amount but never its date, so the card's own
+            # transactions are the dependable signal; the bank's date is used
+            # where given, unless an autopay amount says how much is coming.
+            since = liability.last_statement_issue_date or (due - _NO_STATEMENT_LOOKBACK)
+            cycle = [
+                (on, amt)
+                for on, amt in (credits or {}).get(account.account_id, [])
+                if on > since
+            ]
+            paid_amount = sum((amt for _, amt in cycle), ZERO) or None
+            paid = bool(paid_amount and paid_amount >= target)
+            if autopay is None:
+                paid = paid or bool(
+                    liability.last_payment_date
+                    and liability.last_statement_issue_date
+                    and liability.last_payment_date >= liability.last_statement_issue_date
+                )
+            # Part of it already paid: only the rest is still due.
+            amount = target if (autopay is not None or liability.minimum_payment_amount is not None) else None
+            if amount is not None and paid_amount and not paid:
+                amount = amount - paid_amount
+            still_due = ZERO if paid or amount is None else amount
+            payments.append(
+                UpcomingPayment(
+                    **common,
+                    due_date=due,
+                    amount=amount,
+                    statement_balance=liability.last_statement_balance,
+                    overdue=bool(liability.is_overdue) and not paid,
+                    paid=paid,
+                    paid_amount=paid_amount,
+                    paid_date=cycle[0][0] if cycle else None,
+                )
             )
-        )
+        if autopay is None:
+            continue
+        # A fixed autopay is known months ahead, unlike a minimum, so the
+        # months after this one are projected too, until what is owed now is
+        # paid off. New charges would add to that, but are not guessed at.
+        remaining = owed - still_due
+        for on in occurrences(due, "monthly", end, due.day):
+            if on <= due or on < today:
+                continue
+            amount = min(autopay, remaining)
+            if amount <= 0:
+                break
+            payments.append(
+                UpcomingPayment(**common, due_date=on, amount=amount, estimated=True)
+            )
+            remaining -= amount
     return payments
 
 
@@ -321,9 +364,16 @@ async def build_upcoming(
     return UpcomingResponse(start=today, end=end, payments=payments, total_due=total_due)
 
 
-def _months_left(today: date, ends: date) -> int:
-    # Payments left before the promo ends, one per month, at least one.
-    return max(1, math.ceil((ends - today).days / 30.4375))
+def _payments_left(today: date, ends: date, next_due: date | None) -> int:
+    """Monthly payments due from today up to the promo's end, at least one.
+
+    Counted on the real due dates where known: a promo ending Sep 30 with
+    payments due on the 1st has one fewer than the months between suggest.
+    """
+    if next_due is None:
+        return max(1, math.ceil((ends - today).days / 30.4375))
+    first = next_on_or_after(next_due, "monthly", today, next_due.day)
+    return max(1, sum(1 for _ in occurrences(first, "monthly", ends, next_due.day)))
 
 
 def _rates(
@@ -334,8 +384,13 @@ def _rates(
     promo_balance: Decimal | None,
     deferred: bool,
     today: date,
+    planned: Decimal | None = None,
 ) -> DebtOut:
-    """Fill in the rate fields, working out what a promo means today."""
+    """Fill in the rate fields, working out what a promo means today.
+
+    ``planned`` is what will be paid each month: a fixed autopay, else the
+    minimum.
+    """
     active = (
         promo_apr is not None and promo_ends_on is not None and promo_ends_on >= today
     )
@@ -355,12 +410,13 @@ def _rates(
         # an extra dollar pays down.
         if covered >= debt.balance:
             update["apr"] = promo_apr
-        needed = (covered / _months_left(today, promo_ends_on)).quantize(
-            CENT, rounding=ROUND_UP
-        )
+        left = _payments_left(today, promo_ends_on, debt.next_due_date)
+        needed = (covered / left).quantize(CENT, rounding=ROUND_UP)
         update["promo_monthly_needed"] = needed
-        if debt.minimum_payment is not None:
-            update["promo_on_track"] = debt.minimum_payment >= needed
+        update["promo_payments_left"] = left
+        if planned is not None:
+            update["promo_on_track"] = planned >= needed
+            update["promo_left_at_end"] = max(covered - planned * left, ZERO)
     return debt.model_copy(update=update)
 
 
@@ -437,6 +493,7 @@ async def build_debts(session: AsyncSession, today: date) -> DebtsResponse:
                 liability.last_statement_balance if liability else None
             ),
             is_overdue=bool(liability and liability.is_overdue),
+            autopay_amount=account.autopay_amount,
         )
         debts.append(
             _rates(
@@ -447,6 +504,7 @@ async def build_debts(session: AsyncSession, today: date) -> DebtsResponse:
                 account.promo_balance,
                 account.promo_deferred_interest,
                 today,
+                planned_payment(account),
             )
         )
 
@@ -475,6 +533,7 @@ async def build_debts(session: AsyncSession, today: date) -> DebtsResponse:
                 bill.promo_balance,
                 bill.promo_deferred_interest,
                 today,
+                bill.amount,
             )
         )
 

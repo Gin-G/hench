@@ -92,6 +92,10 @@ class Account(Base):
     # Credit and loan accounts: the APR to use in place of Plaid's, for a loan
     # Plaid reports no rate for, or a card whose rate it has wrong.
     apr_override: Mapped[Decimal | None] = mapped_column(Rate, nullable=True)
+    # Credit and loan accounts: a fixed amount the bank pays each month by
+    # autopay. It stands in for the minimum (whichever is larger) on the
+    # timeline and in promo payoff maths. Set from the UI; sync never writes it.
+    autopay_amount: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     # --- Promotional rate, entered by hand ---------------------------------
     # Plaid reports APRs but not when a promo ends. While promo_ends_on has
     # not passed, promo_apr applies to promo_balance (null = the whole

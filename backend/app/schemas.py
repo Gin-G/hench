@@ -85,6 +85,7 @@ class AccountOut(BaseModel):
     institution_name: str | None = None
     pay_from_account_id: str | None = None
     apr_override: Decimal | None = None
+    autopay_amount: Decimal | None = None
     promo_apr: Decimal | None = None
     promo_ends_on: date | None = None
     promo_balance: Decimal | None = None
@@ -125,6 +126,8 @@ class AccountUpdate(BaseModel):
     pay_from_account_id: str | None = None
     # Credit and loan accounts only. Null clears each.
     apr_override: Decimal | None = Field(default=None, ge=0, le=100)
+    # Fixed monthly autopay; null means the bank pays the minimum.
+    autopay_amount: Decimal | None = Field(default=None, gt=0)
     promo_apr: Decimal | None = Field(default=None, ge=0, le=100)
     promo_ends_on: date | None = None
     promo_balance: Decimal | None = Field(default=None, ge=0)
@@ -223,9 +226,10 @@ class UpcomingPayment(BaseModel):
     name: str
     due_date: date
     amount: Decimal | None = None
-    # "minimum" for card minimums, "average" for a detected stream's typical
-    # amount; null when the amount is the bill's own fixed figure.
-    amount_basis: Literal["minimum", "average"] | None = None
+    # "minimum" for card minimums, "autopay" for a card's fixed autopay,
+    # "average" for a detected stream's typical amount; null when the amount
+    # is the bill's own fixed figure.
+    amount_basis: Literal["minimum", "autopay", "average"] | None = None
     statement_balance: Decimal | None = None
     autopay: bool | None = None
     overdue: bool = False
@@ -284,10 +288,16 @@ class DebtOut(BaseModel):
     promo_deferred_interest: bool = False
     # The promo has not ended yet.
     promo_active: bool = False
-    # Monthly payment that clears the promo balance by the end date, and
-    # whether the minimum alone does.
+    # Monthly payment that clears the promo balance by the end date, over
+    # the payments due before it, and whether the planned payment (autopay,
+    # else the minimum) alone does.
     promo_monthly_needed: Decimal | None = None
     promo_on_track: bool | None = None
+    promo_payments_left: int | None = None
+    # What the planned payment leaves of the promo balance at the end date,
+    # with no new charges: the amount to make up on top of it.
+    promo_left_at_end: Decimal | None = None
+    autopay_amount: Decimal | None = None
     # Plaid's APR breakdown for a card, e.g. a 0% balance transfer on part of
     # the balance: a hint for filling in the promo.
     plaid_aprs: list[dict] = []

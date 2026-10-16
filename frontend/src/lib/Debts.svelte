@@ -1,6 +1,6 @@
 <script>
   // Debts ranked by the rate an extra dollar saves today, with the target
-  // marked. Rates and promos on linked cards and loans are edited inline;
+  // marked. Rates, autopay and promos on linked cards and loans are edited inline;
   // a hand-entered debt is edited through its bill.
   import { api, fmtMoney, fmtDate } from "./api.js";
 
@@ -22,6 +22,7 @@
     editing = d.ref_id;
     draft = {
       apr_override: d.apr_overridden ? String(Number(d.base_apr)) : "",
+      autopay_amount: d.autopay_amount ?? "",
       promo_apr: d.promo_apr != null ? String(Number(d.promo_apr)) : "",
       promo_ends_on: d.promo_ends_on ?? "",
       promo_balance: d.promo_balance ?? "",
@@ -34,6 +35,7 @@
     const id = editing;
     const body = {
       apr_override: orNull(draft.apr_override),
+      autopay_amount: orNull(draft.autopay_amount),
       promo_apr: orNull(draft.promo_apr),
       promo_ends_on: draft.promo_ends_on || null,
       promo_balance: orNull(draft.promo_balance),
@@ -158,18 +160,26 @@
                 </span>
                 {#if d.promo_deferred_interest}<span class="tag warn" title="Interest waived so far is charged back if not cleared by the end date">deferred interest</span>{/if}
                 <span class="sub" class:bad={d.promo_on_track === false}>
-                  {fmtMoney(d.promo_monthly_needed)}/mo clears it{#if d.promo_on_track === false}; minimum won't{/if}
+                  {fmtMoney(d.promo_monthly_needed)}/mo × {d.promo_payments_left} clears it{#if d.promo_on_track === false}; {d.autopay_amount != null ? "autopay" : "minimum"} won't{/if}
                 </span>
+                {#if d.promo_on_track === false && d.promo_left_at_end != null}
+                  <span class="sub bad" title="With no new charges on the card">
+                    {fmtMoney(d.promo_left_at_end)} left at the end to make up
+                  </span>
+                {/if}
                 <span class="sub">then {pct(d.base_apr)}</span>
               {:else if d.promo_ends_on}
                 <span class="sub">promo ended {fmtDate(d.promo_ends_on, { month: "short", day: "numeric", year: "numeric" })}</span>
               {/if}
             </td>
             <td class="num strong">{fmtMoney(d.balance)}</td>
-            <td class="num">{d.minimum_payment != null ? fmtMoney(d.minimum_payment) : "—"}</td>
+            <td class="num">
+              {d.minimum_payment != null ? fmtMoney(d.minimum_payment) : "—"}
+              {#if d.autopay_amount != null}<span class="sub">autopay {fmtMoney(d.autopay_amount)}</span>{/if}
+            </td>
             <td class="due">{d.next_due_date ? fmtDate(d.next_due_date) : ""}</td>
             <td class="act">
-              <button class="small" onclick={() => startEdit(d)}>{d.source === "manual" ? "Edit bill" : "Rates"}</button>
+              <button class="small" onclick={() => startEdit(d)}>{d.source === "manual" ? "Edit bill" : "Rates & autopay"}</button>
             </td>
           </tr>
           {#if editing === d.ref_id && d.source === "plaid"}
@@ -179,6 +189,10 @@
                   <label>
                     Regular APR %
                     <input type="number" step="0.01" min="0" max="100" bind:value={draft.apr_override} placeholder={d.apr_overridden ? "" : `Plaid: ${pct(d.base_apr)}`} />
+                  </label>
+                  <label>
+                    Autopay $/mo
+                    <input type="number" step="0.01" min="0.01" bind:value={draft.autopay_amount} placeholder="minimum" />
                   </label>
                   <label>
                     Promo APR %

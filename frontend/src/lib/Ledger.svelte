@@ -158,7 +158,7 @@
             </td>
             <td class="num amt" class:in={e.kind === "paycheck" || e.kind === "transfer"}>
               {#if e.amount != null}{e.kind === "paycheck" || e.kind === "transfer" ? "+" : ""}{fmtMoney(e.amount)}{:else}varies{/if}
-              {#if p?.amount_basis}<span class="basis">{p.amount_basis === "minimum" ? "min" : "avg"}</span>{/if}
+              {#if p?.amount_basis}<span class="basis">{({ minimum: "min", autopay: "autopay", average: "avg" })[p.amount_basis]}</span>{/if}
               {#if e.kind === "paycheck" || e.kind === "transfer" || p?.estimated}<span class="basis" title="Projected, not stated">est.</span>{/if}
             </td>
             <td class="acct">
