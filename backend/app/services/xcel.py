@@ -25,6 +25,7 @@ from . import google
 from .schedule import add_months
 from .sources import (
     hide_detected_streams,
+    latest_paid_per_bank,
     paid_per_bank,
     parse_date,
     parse_money,
@@ -66,6 +67,34 @@ def parse_reminder(lines: list[str]):
     )
 
 
+# How far past its due date a payment can land and still be paying that bill.
+_PAID_LATE_BY = timedelta(days=15)
+
+
+async def _paid_without_email(session: AsyncSession, bill: Bill, today) -> None:
+    """Move a bill on once the bank shows it paid, when no email can be read.
+
+    Without this a Gmail outage leaves the last bill on the timeline as
+    overdue long after it was paid. The amount the bank saw stands in as the
+    next bill's estimate.
+    """
+    if not bill.active:
+        return
+    found = await latest_paid_per_bank(session, _PAYMENT_PATTERN, bill.last_paid_date)
+    if found is None:
+        return
+    paid_on, amount = found
+    if bill.next_due_date > paid_on + _PAID_LATE_BY:
+        # Paid early for a later bill, or a stray charge: not this one.
+        return
+    while bill.next_due_date <= paid_on or bill.next_due_date < today:
+        bill.next_due_date = add_months(bill.next_due_date, 1)
+    bill.due_day = bill.next_due_date.day
+    bill.due_date_estimated = True
+    bill.last_paid_date = paid_on
+    bill.amount = amount
+
+
 async def sync_xcel(session: AsyncSession, force: bool = False) -> str:
     if not google.configured():
         return "not configured"
@@ -96,6 +125,7 @@ async def sync_xcel(session: AsyncSession, force: bool = False) -> str:
         emails = await google.search(session, _QUERY, limit=3)
     except Exception as e:  # noqa: BLE001 - recorded on the bill, shown in the UI
         bill.source_error = str(e) or type(e).__name__
+        await _paid_without_email(session, bill, today)
         await session.flush()
         return f"failed: {bill.source_error}"
 
@@ -119,6 +149,7 @@ async def sync_xcel(session: AsyncSession, force: bool = False) -> str:
                 "email_received": emails[0].received.isoformat(),
                 "lines": emails[0].lines[:80],
             }
+        await _paid_without_email(session, bill, today)
         await session.flush()
         return f"failed: {bill.source_error}"
 

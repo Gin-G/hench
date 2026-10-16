@@ -40,7 +40,9 @@ _DEBT_TYPES = {"credit", "loan"}
 
 
 def balance_of(account: Account) -> Decimal | None:
-    # Available, not current: a pending debit is already spoken for.
+    # Available, not current: it is the live figure the bank itself shows.
+    # Chase's "current" can lag well behind it (posted items only), so it is
+    # only a fallback for banks that report no available balance.
     if account.available_balance is not None:
         return account.available_balance
     return account.current_balance

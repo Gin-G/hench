@@ -99,6 +99,26 @@ async def paid_per_bank(
     return None
 
 
+async def latest_paid_per_bank(
+    session: AsyncSession, pattern: str, after: date | None
+) -> tuple[date, Decimal] | None:
+    """The newest bank or card payment matching ``pattern``, of any amount,
+    posted after ``after`` — for when the bill itself cannot be read."""
+    query = select(Transaction.date, Transaction.amount).where(
+        or_(
+            Transaction.name.ilike(pattern),
+            Transaction.merchant_name.ilike(pattern),
+        ),
+        Transaction.amount > 0,
+    )
+    if after is not None:
+        query = query.where(Transaction.date > after)
+    row = (
+        await session.execute(query.order_by(Transaction.date.desc()).limit(1))
+    ).first()
+    return (row[0], Decimal(row[1])) if row else None
+
+
 async def hide_detected_streams(session: AsyncSession, pattern: str) -> None:
     """Hide Plaid's own guess at a bill that a source now supplies."""
     streams = (

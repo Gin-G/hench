@@ -111,6 +111,9 @@ def _bill_payments(
     return payments
 
 
+# Categories Plaid files a payment received on a card or loan under.
+_PAYMENT_CATEGORIES = ("TRANSFER_IN", "LOAN_PAYMENTS", "LOAN_DISBURSEMENTS")
+
 # How long before a statement date a card's payments are looked for, when a
 # card reports no statement date at all.
 _NO_STATEMENT_LOOKBACK = timedelta(days=35)
@@ -121,9 +124,11 @@ async def _card_credits(
 ) -> dict[str, list[tuple[date, Decimal]]]:
     """Payments posted to each card or loan, newest first, pending included.
 
-    Seen from the card's own side, as credits: Plaid categorises the "Payment
-    Received" line as a transfer in or a loan payment. Refunds are credits
-    too but carry the merchant's category, so they are not mistaken for
+    Seen from the card's own side, as credits. Plaid's category for the
+    "Payment Received" line varies by bank — a transfer in or a loan payment,
+    but Chase's come through as loan disbursements or even income — so the
+    payment wording on the line counts too. Refunds are credits as well but
+    carry the merchant's name and category, so they are not mistaken for
     payments.
     """
     debt_ids = [a.account_id for a in accounts.values() if a.type in ("credit", "loan")]
@@ -137,8 +142,10 @@ async def _card_credits(
                 Transaction.amount < 0,
                 Transaction.date >= today - timedelta(days=62),
                 or_(
-                    Transaction.category_primary.in_(("TRANSFER_IN", "LOAN_PAYMENTS")),
-                    Transaction.pfc_primary.in_(("TRANSFER_IN", "LOAN_PAYMENTS")),
+                    Transaction.category_primary.in_(_PAYMENT_CATEGORIES),
+                    Transaction.pfc_primary.in_(_PAYMENT_CATEGORIES),
+                    Transaction.name.ilike("%payment%"),
+                    Transaction.name.ilike("%autopay%"),
                 ),
             )
             .order_by(Transaction.date.desc())
