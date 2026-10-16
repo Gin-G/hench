@@ -86,6 +86,8 @@ class AccountOut(BaseModel):
     pay_from_account_id: str | None = None
     apr_override: Decimal | None = None
     autopay_amount: Decimal | None = None
+    payment_amount: Decimal | None = None
+    payment_due: date | None = None
     promo_apr: Decimal | None = None
     promo_ends_on: date | None = None
     promo_balance: Decimal | None = None
@@ -128,6 +130,9 @@ class AccountUpdate(BaseModel):
     apr_override: Decimal | None = Field(default=None, ge=0, le=100)
     # Fixed monthly autopay; null means the bank pays the minimum.
     autopay_amount: Decimal | None = Field(default=None, gt=0)
+    # What to pay this cycle, in place of the minimum or autopay; null goes
+    # back to those. Applies to the card's current due date only.
+    payment_amount: Decimal | None = Field(default=None, ge=0)
     promo_apr: Decimal | None = Field(default=None, ge=0, le=100)
     promo_ends_on: date | None = None
     promo_balance: Decimal | None = Field(default=None, ge=0)
@@ -227,10 +232,13 @@ class UpcomingPayment(BaseModel):
     due_date: date
     amount: Decimal | None = None
     # "minimum" for card minimums, "autopay" for a card's fixed autopay,
-    # "average" for a detected stream's typical amount; null when the amount
-    # is the bill's own fixed figure.
-    amount_basis: Literal["minimum", "autopay", "average"] | None = None
+    # "chosen" for an amount picked for this cycle, "average" for a detected
+    # stream's typical amount; null when the amount is the bill's own figure.
+    amount_basis: Literal["minimum", "autopay", "chosen", "average"] | None = None
     statement_balance: Decimal | None = None
+    # Cards only, for choosing what to pay: the minimum and what is owed now.
+    minimum_payment: Decimal | None = None
+    balance: Decimal | None = None
     autopay: bool | None = None
     overdue: bool = False
     # A card already paid this cycle — Plaid keeps showing the old due date

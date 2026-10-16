@@ -42,6 +42,27 @@
     onAct(() => api.updateAccount(a.account_id, { in_plan: inPlan }));
   }
 
+  // A card's payment for its current cycle can be changed from its row:
+  // more than the minimum, the statement, or the whole balance. ref_id of
+  // the card being edited, and the draft amount.
+  let choosing = $state(null);
+  let choice = $state("");
+  const canChoose = (p) => p?.source === "card" && !p.estimated && !p.paid;
+
+  function startChoose(p) {
+    choosing = p.ref_id;
+    // The amount shown is what is left after any partial payment; the
+    // choice is for the whole cycle.
+    const total = Number(p.amount ?? 0) + Number(p.paid_amount ?? 0);
+    choice = p.amount != null ? total.toFixed(2) : "";
+  }
+
+  function saveChoice(p, value) {
+    choosing = null;
+    const amount = value === "" || value == null ? null : String(value);
+    onAct(() => api.updateAccount(p.ref_id, { payment_amount: amount }));
+  }
+
   const isDebt = (key) => books[key]?.kind === "debt";
   const neg = (key, bal) => bal != null && !isDebt(key) && Number(bal) < 0;
   const same = (a, b) => a != null && b != null && Number(a) === Number(b);
@@ -157,8 +178,34 @@
               </span>
             </td>
             <td class="num amt" class:in={e.kind === "paycheck" || e.kind === "transfer"}>
-              {#if e.amount != null}{e.kind === "paycheck" || e.kind === "transfer" ? "+" : ""}{fmtMoney(e.amount)}{:else}varies{/if}
-              {#if p?.amount_basis}<span class="basis">{({ minimum: "min", autopay: "autopay", average: "avg" })[p.amount_basis]}</span>{/if}
+              {#if canChoose(p) && choosing === p.ref_id}
+                <form class="choose" onsubmit={(ev) => { ev.preventDefault(); saveChoice(p, choice); }}>
+                  <input type="number" step="0.01" min="0" bind:value={choice} aria-label="Pay this cycle" />
+                  <span class="quick">
+                    {#if p.minimum_payment != null}
+                      <button type="button" class="small ghost" onclick={() => (choice = Number(p.minimum_payment).toFixed(2))}>Min {fmtMoney(p.minimum_payment)}</button>
+                    {/if}
+                    {#if p.statement_balance != null && Number(p.statement_balance) > 0}
+                      <button type="button" class="small ghost" onclick={() => (choice = Number(p.statement_balance).toFixed(2))}>Statement {fmtMoney(p.statement_balance)}</button>
+                    {/if}
+                    {#if p.balance != null && Number(p.balance) > 0}
+                      <button type="button" class="small ghost" onclick={() => (choice = Number(p.balance).toFixed(2))}>In full {fmtMoney(p.balance)}</button>
+                    {/if}
+                  </span>
+                  <span class="quick">
+                    {#if p.amount_basis === "chosen"}
+                      <button type="button" class="small ghost" title="Back to the {p.autopay ? 'autopay' : 'minimum'}" onclick={() => saveChoice(p, null)}>Reset</button>
+                    {/if}
+                    <button type="button" class="small" onclick={() => (choosing = null)}>Cancel</button>
+                    <button type="submit" class="small primary">Save</button>
+                  </span>
+                </form>
+              {:else if canChoose(p)}
+                <button class="pick" title="Change what you'll pay this cycle" onclick={() => startChoose(p)}>
+                  {e.amount != null ? fmtMoney(e.amount) : "varies"} ✎
+                </button>
+              {:else if e.amount != null}{e.kind === "paycheck" || e.kind === "transfer" ? "+" : ""}{fmtMoney(e.amount)}{:else}varies{/if}
+              {#if p?.amount_basis && choosing !== p.ref_id}<span class="basis">{({ minimum: "min", autopay: "autopay", chosen: "your amount", average: "avg" })[p.amount_basis]}</span>{/if}
               {#if e.kind === "paycheck" || e.kind === "transfer" || p?.estimated}<span class="basis" title="Projected, not stated">est.</span>{/if}
             </td>
             <td class="acct">
@@ -212,6 +259,31 @@
 </section>
 
 <style>
+  .pick {
+    background: none;
+    border: 0;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    border-bottom: 1px dashed currentColor;
+  }
+  .choose {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.3rem;
+  }
+  .choose input {
+    width: 7.5rem;
+    text-align: right;
+  }
+  .choose .quick {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.25rem;
+  }
   .panel {
     background: var(--panel);
     border: 1px solid var(--border);

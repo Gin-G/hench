@@ -68,8 +68,8 @@ async def update_account(
     session: AsyncSession = Depends(get_session),
 ) -> AccountOut:
     """Rename an account; for a card or loan, pick the bank account that pays
-    it, override its APR, set a fixed autopay amount, or record a promotional
-    rate.
+    it, override its APR, set a fixed autopay amount or this cycle's payment,
+    or record a promotional rate.
 
     Those are the only edits; the rest is Plaid's.
     """
@@ -102,6 +102,19 @@ async def update_account(
                     status_code=422, detail="Pay from must be a linked bank account"
                 )
         account.pay_from_account_id = source_id
+    if "payment_amount" in changes:
+        liability = account.liability
+        if body.payment_amount is not None and (
+            liability is None or liability.next_payment_due_date is None
+        ):
+            raise HTTPException(
+                status_code=422, detail="This account has no payment due to change"
+            )
+        account.payment_amount = body.payment_amount
+        # Pinned to this cycle's due date, so it lapses with a new statement.
+        account.payment_due = (
+            liability.next_payment_due_date if body.payment_amount is not None else None
+        )
     rate_fields = {
         k: v
         for k, v in changes.items()

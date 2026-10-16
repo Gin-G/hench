@@ -193,8 +193,13 @@ def _card_payments(
             amount_basis="autopay" if autopay is not None else "minimum",
             autopay=True if autopay is not None else None,
             account=account.item.institution_name,
+            minimum_payment=liability.minimum_payment_amount,
+            balance=owed,
             **pay_from(account.pay_from_account_id, accounts),
         )
+        # An amount chosen for this cycle wins over the minimum or autopay,
+        # for this due date only.
+        chosen = account.payment_amount if account.payment_due == due else None
         # Plaid leaves the old due date in place until the next statement
         # closes. A past date that Plaid does not flag as overdue is therefore
         # almost always a cycle already paid, not a missed payment.
@@ -213,21 +218,29 @@ def _card_payments(
                 if on > since
             ]
             paid_amount = sum((amt for _, amt in cycle), ZERO) or None
+            if chosen is not None:
+                target = chosen
             paid = bool(paid_amount and paid_amount >= target)
-            if autopay is None:
+            if autopay is None and chosen is None:
                 paid = paid or bool(
                     liability.last_payment_date
                     and liability.last_statement_issue_date
                     and liability.last_payment_date >= liability.last_statement_issue_date
                 )
             # Part of it already paid: only the rest is still due.
-            amount = target if (autopay is not None or liability.minimum_payment_amount is not None) else None
+            amount = (
+                target
+                if chosen is not None
+                or autopay is not None
+                or liability.minimum_payment_amount is not None
+                else None
+            )
             if amount is not None and paid_amount and not paid:
                 amount = amount - paid_amount
             still_due = ZERO if paid or amount is None else amount
             payments.append(
                 UpcomingPayment(
-                    **common,
+                    **{**common, **({"amount_basis": "chosen"} if chosen is not None else {})},
                     due_date=due,
                     amount=amount,
                     statement_balance=liability.last_statement_balance,
