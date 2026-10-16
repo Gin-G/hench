@@ -37,7 +37,7 @@ from ..schemas import (
 from .bills import _paid_cards, account_label, clean_name, planned_payment
 from .groups import DEBT, FOOD, UTILITIES, group_of
 from .ledger import balance_of
-from .sankey import _effective, _internal_transfers
+from .sankey import _effective, own_flows
 
 ZERO = Decimal("0")
 CENT = Decimal("0.01")
@@ -232,8 +232,8 @@ async def build_networth(session: AsyncSession, today: date) -> NetWorthResponse
         )
 
     # --- Month by month ------------------------------------------------------
-    # The same income and spending as the cash-flow chart: every linked
-    # account, moves between them left out.
+    # The same income and spending as the cash-flow chart: the user's own
+    # accounts, moves between them left out.
     streams = list(
         (
             await session.scalars(
@@ -248,12 +248,13 @@ async def build_networth(session: AsyncSession, today: date) -> NetWorthResponse
         for tid in s.transaction_ids
     }
     debt_accounts = {a.account_id for a in accounts if a.type in _DEBT_TYPES}
-    internal = _internal_transfers(txns, debt_accounts)
+    kept, via = own_flows(txns, accounts)
+    counted = {t.transaction_id for t in kept}
     flows = []
     for label, start, end in months:
         sums: dict[str, Decimal] = defaultdict(lambda: ZERO)
         for t in txns:
-            if not start <= t.date <= end:
+            if not start <= t.date <= end or t.account_id not in mine_ids:
                 continue
             amount = Decimal(t.amount)
             if t.account_id in debt_accounts:
@@ -263,12 +264,16 @@ async def build_networth(session: AsyncSession, today: date) -> NetWorthResponse
                     sums["card_paid"] -= amount
             else:
                 sums["cash_change"] -= amount
-            if t.transaction_id in internal:
+            if t.transaction_id not in counted:
                 continue
             if amount < 0:
                 sums["income"] -= amount
             elif amount > 0:
-                kind = chosen.get(t.transaction_id) or _guess_commitment(*_effective(t))
+                kind = (
+                    "optional"
+                    if t.transaction_id in via
+                    else chosen.get(t.transaction_id) or _guess_commitment(*_effective(t))
+                )
                 sums["optional" if kind == "optional" else kind] += amount
         spending = sums["essential"] + sums["debt"] + sums["optional"]
         flows.append(

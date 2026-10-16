@@ -13,6 +13,10 @@ money out of one linked account matched by money in of the same amount to
 another within a few days. With no such match it crossed the edge of what is
 linked, so it counts — a Venmo cash-out is income, a Venmo payment to
 someone is spending, a payment to a card that is not linked is debt paid.
+
+An account left out of the plan (a spouse's own) is not the user's money:
+its transactions are left out altogether, and money moved between it and
+the user's accounts counts as coming in from it or going out to it.
 """
 from __future__ import annotations
 
@@ -25,7 +29,8 @@ from sqlalchemy.orm import selectinload
 
 from ..models import Account, Transaction
 from ..schemas import SankeyLink, SankeyNode, SankeyResponse
-from .groups import INCOME_SOURCES, OTHER, group_of, income_source_of
+from .bills import account_label
+from .groups import INCOME_SOURCES, OTHER, TRANSFERS, group_of, income_source_of
 
 INCOME_NODE = "Income"
 SAVINGS_NODE = "Savings / Unspent"
@@ -61,8 +66,11 @@ def _effective(txn: Transaction) -> tuple[str, str]:
     return primary, detailed
 
 
-def _internal_transfers(txns: list[Transaction], debt_accounts: set[str]) -> set[str]:
-    """Ids of transactions that are one side of a move between own accounts.
+def _internal_transfers(
+    txns: list[Transaction], debt_accounts: set[str]
+) -> dict[str, Transaction]:
+    """Transactions that are one side of a move between linked accounts, by
+    id, each with its other side.
 
     Money out is a transfer, or a card or loan payment. Money in is a
     transfer, or any credit to a card or loan — banks file the "payment
@@ -96,12 +104,40 @@ def _internal_transfers(txns: list[Transaction], debt_accounts: set[str]) -> set
         ),
         key=lambda p: (p[0], p[1]),
     )
-    paired: set[str] = set()
+    paired: dict[str, Transaction] = {}
     for _, _, out, into in pairs:
         if out.transaction_id in paired or into.transaction_id in paired:
             continue
-        paired.update((out.transaction_id, into.transaction_id))
+        paired[out.transaction_id] = into
+        paired[into.transaction_id] = out
     return paired
+
+
+def own_flows(
+    txns: list[Transaction], accounts: list[Account]
+) -> tuple[list[Transaction], dict[str, str]]:
+    """The transactions that are the user's money coming in or going out.
+
+    Moves between the user's own accounts are dropped, and so is everything
+    on an account left out of the plan. A move between the two is kept, with
+    the other account's name by transaction id: money from a spouse's account
+    is income from her, money sent to it is spending.
+    """
+    debt_accounts = {a.account_id for a in accounts if a.type in _DEBT_TYPES}
+    outside = {a.account_id: a for a in accounts if not a.in_plan}
+    pairs = _internal_transfers(txns, debt_accounts)
+    kept: list[Transaction] = []
+    via: dict[str, str] = {}
+    for t in txns:
+        if t.account_id in outside:
+            continue
+        other = pairs.get(t.transaction_id)
+        if other is None:
+            kept.append(t)
+        elif other.account_id in outside:
+            kept.append(t)
+            via[t.transaction_id] = account_label(outside[other.account_id])
+    return kept, via
 
 
 async def build_sankey(session: AsyncSession, month: str) -> SankeyResponse:
@@ -120,19 +156,9 @@ async def build_sankey(session: AsyncSession, month: str) -> SankeyResponse:
             .options(selectinload(Transaction.override))
         )
     ).all()
-    debt_accounts = set(
-        (
-            await session.scalars(
-                select(Account.account_id).where(Account.type.in_(_DEBT_TYPES))
-            )
-        ).all()
-    )
-    internal = _internal_transfers(list(nearby), debt_accounts)
-    txns = [
-        t
-        for t in nearby
-        if start <= t.date < end and t.transaction_id not in internal
-    ]
+    accounts = list((await session.scalars(select(Account))).all())
+    kept, via = own_flows(list(nearby), accounts)
+    txns = [t for t in kept if start <= t.date < end]
 
     total_income = 0.0
     total_spending = 0.0
@@ -144,10 +170,18 @@ async def build_sankey(session: AsyncSession, month: str) -> SankeyResponse:
         amount = float(txn.amount)
         if amount < 0:  # money in
             total_income += -amount
-            by_source[income_source_of(*_effective(txn), txn.name)] += -amount
+            source = (
+                f"From {via[txn.transaction_id]}"
+                if txn.transaction_id in via
+                else income_source_of(*_effective(txn), txn.name)
+            )
+            by_source[source] += -amount
         elif amount > 0:  # money out
             total_spending += amount
-            group, item = group_of(*_effective(txn))
+            if txn.transaction_id in via:
+                group, item = TRANSFERS, f"To {via[txn.transaction_id]}"
+            else:
+                group, item = group_of(*_effective(txn))
             by_group[group] += amount
             by_item[group][item] += amount
 
@@ -159,8 +193,8 @@ async def build_sankey(session: AsyncSession, month: str) -> SankeyResponse:
             node_names.append(name)
 
     # Where the money came from, in a fixed order so a source stays put
-    # from month to month.
-    for source in INCOME_SOURCES:
+    # from month to month; money from an account outside the plan last.
+    for source in INCOME_SOURCES + sorted(set(by_source) - set(INCOME_SOURCES)):
         if by_source.get(source):
             add_node(source)
             links.append(
