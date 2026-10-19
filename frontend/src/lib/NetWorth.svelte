@@ -36,6 +36,15 @@
     checking: "Checking",
     savings: "Savings",
     "credit card": "Credit card",
+    "401k": "401(k)",
+    "403B": "403(b)",
+    "457b": "457(b)",
+    ira: "IRA",
+    roth: "Roth IRA",
+    "roth 401k": "Roth 401(k)",
+    brokerage: "Brokerage",
+    hsa: "HSA",
+    "cash management": "Cash management",
   };
 
   function categoryLabel(line) {

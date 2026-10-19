@@ -22,7 +22,7 @@ from plaid.model.liabilities_get_request import LiabilitiesGetRequest
 from plaid.model.transactions_recurring_get_request import (
     TransactionsRecurringGetRequest,
 )
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -72,7 +72,12 @@ def _rate(value) -> Decimal | None:
 
 
 async def refresh_balances(session: AsyncSession, item: Item, access_token: str) -> int:
-    """Snapshot current/available/limit onto each Account for this Item."""
+    """Snapshot current/available/limit onto each Account for this Item.
+
+    Accounts missing so far are added here: /transactions/sync only lists the
+    accounts it carries transactions for, so a retirement or brokerage
+    account would otherwise never be stored at all.
+    """
     from ..plaid_client import get_plaid_client
 
     client = get_plaid_client()
@@ -92,18 +97,28 @@ async def refresh_balances(session: AsyncSession, item: Item, access_token: str)
     for acct in resp.accounts:
         a = acct.to_dict()
         bal = a.get("balances") or {}
-        result = await session.execute(
-            update(Account)
-            .where(Account.account_id == a["account_id"])
-            .values(
-                current_balance=_money(bal.get("current")),
-                available_balance=_money(bal.get("available")),
-                credit_limit=_money(bal.get("limit")),
-                iso_currency_code=bal.get("iso_currency_code"),
-                balances_updated_at=now,
+        values = dict(
+            name=a.get("name"),
+            official_name=a.get("official_name"),
+            mask=a.get("mask"),
+            type=str(a.get("type")) if a.get("type") is not None else None,
+            subtype=str(a.get("subtype")) if a.get("subtype") is not None else None,
+            current_balance=_money(bal.get("current")),
+            available_balance=_money(bal.get("available")),
+            credit_limit=_money(bal.get("limit")),
+            iso_currency_code=bal.get("iso_currency_code"),
+            balances_updated_at=now,
+        )
+        stmt = pg_insert(Account).values(
+            account_id=a["account_id"], item_id=item.item_id, **values
+        )
+        await session.execute(
+            stmt.on_conflict_do_update(
+                index_elements=[Account.account_id],
+                set_={k: getattr(stmt.excluded, k) for k in values},
             )
         )
-        n += result.rowcount or 0
+        n += 1
     log.info("refreshed balances item=%s accounts=%d", item.item_id, n)
     return n
 

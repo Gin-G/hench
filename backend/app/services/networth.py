@@ -101,6 +101,15 @@ def _holding_value(holding: Holding, on: date) -> Decimal:
     return value
 
 
+def _worth(account: Account) -> Decimal | None:
+    """What an account counts for. A debt's is what is owed. An investment
+    account's available balance is only its uninvested cash, so it counts
+    at its current value, as do accounts reporting no available balance."""
+    if account.type in _DEBT_TYPES or account.type == "investment":
+        return account.current_balance
+    return balance_of(account)
+
+
 def _q(x: Decimal | float) -> Decimal:
     return Decimal(x).quantize(CENT)
 
@@ -138,7 +147,7 @@ async def build_networth(session: AsyncSession, today: date) -> NetWorthResponse
     lines: list[NetWorthLine] = []
     for a in mine:
         debt = a.type in _DEBT_TYPES
-        value = a.current_balance if debt else balance_of(a)
+        value = _worth(a)
         if value is None:
             continue
         lines.append(
@@ -194,7 +203,7 @@ async def build_networth(session: AsyncSession, today: date) -> NetWorthResponse
         held = owed = ZERO
         for a in mine:
             debt = a.type in _DEBT_TYPES
-            now = a.current_balance if debt else balance_of(a)
+            now = _worth(a)
             if now is None:
                 continue
             after = sum(
