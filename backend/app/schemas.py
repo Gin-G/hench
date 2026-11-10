@@ -86,7 +86,6 @@ class AccountOut(BaseModel):
     pay_from_account_id: str | None = None
     apr_override: Decimal | None = None
     autopay_amount: Decimal | None = None
-    payment_amount: Decimal | None = None
     payment_hidden: bool = False
     promo_apr: Decimal | None = None
     promo_ends_on: date | None = None
@@ -111,7 +110,6 @@ class RecurringStreamOut(BaseModel):
     predicted_next_date: date | None = None
     is_active: bool
     hidden: bool
-    amount_override: Decimal | None = None
     not_duplicate: bool = False
     commitment: str | None = None
     status: str | None = None
@@ -133,9 +131,6 @@ class AccountUpdate(BaseModel):
     apr_override: Decimal | None = Field(default=None, ge=0, le=100)
     # Fixed monthly autopay; null means the bank pays the minimum.
     autopay_amount: Decimal | None = Field(default=None, gt=0)
-    # What to plan on paying each month, in place of the minimum or autopay;
-    # null goes back to those.
-    payment_amount: Decimal | None = Field(default=None, ge=0)
     # Leave the card's own payment off the timeline, a detected payment from
     # checking standing for it instead.
     payment_hidden: bool | None = None
@@ -150,12 +145,22 @@ class AccountUpdate(BaseModel):
 Commitment = Literal["debt", "essential", "optional"]
 
 
+class PaymentPlanIn(BaseModel):
+    """The amount chosen for one card or loan payment; null goes back to the
+    usual one. Only that payment changes, not the months around it."""
+
+    # "card" for a card or loan's own payment, "recurring" for a loan payment
+    # detected from checking: the UpcomingPayment's source and ref_id.
+    source: Literal["card", "recurring"]
+    ref_id: str
+    due_date: date
+    amount: Decimal | None = Field(default=None, ge=0)
+
+
 class RecurringStreamUpdate(BaseModel):
     """Partial update: only the fields sent are changed."""
 
     hidden: bool | None = None
-    # The amount to plan with in place of Plaid's average; null clears it.
-    amount_override: Decimal | None = Field(default=None, ge=0)
     # True: this and the linked card it looks like are both real payments.
     not_duplicate: bool | None = None
     # Debt, essential or optional; null goes back to the guess from its
@@ -252,9 +257,10 @@ class UpcomingPayment(BaseModel):
     due_date: date
     amount: Decimal | None = None
     # "minimum" for card minimums, "autopay" for a card's fixed autopay,
-    # "planned" for an amount the user set to plan with, "average" for a
-    # detected stream's typical amount; null when it is the bill's own figure.
-    amount_basis: Literal["minimum", "autopay", "planned", "average"] | None = None
+    # "last" for the last amount paid, "planned" for an amount the user chose
+    # for this one payment, "average" for a detected stream's typical amount;
+    # null when it is the bill's own figure.
+    amount_basis: Literal["minimum", "autopay", "last", "planned", "average"] | None = None
     # A card or loan payment whose amount can be set from its row.
     editable: bool = False
     statement_balance: Decimal | None = None

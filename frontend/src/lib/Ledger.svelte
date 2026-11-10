@@ -42,10 +42,11 @@
     onAct(() => api.updateAccount(a.account_id, { in_plan: inPlan }));
   }
 
-  // A card or loan payment's amount can be set from its row, to plan with:
-  // it replaces the minimum, autopay or Plaid's average until changed.
-  // Whether it was paid still comes from the synced transactions. Index of
-  // the row being edited, and the draft amount.
+  // A card or loan payment's amount can be set from its row, to plan with,
+  // for that one payment only: the months around it keep their own, and one
+  // with none chosen goes at the last amount paid (or autopay). Whether it
+  // was paid still comes from the synced transactions. Index of the row
+  // being edited, and the draft amount.
   let choosing = $state(null);
   let choice = $state("");
   const canChoose = (p) => p?.editable && !p.paid;
@@ -61,11 +62,7 @@
   function saveChoice(p, value) {
     choosing = null;
     const amount = value === "" || value == null ? null : String(value);
-    onAct(() =>
-      p.source === "card"
-        ? api.updateAccount(p.ref_id, { payment_amount: amount })
-        : api.updateStream(p.ref_id, { amount_override: amount })
-    );
+    onAct(() => api.setPaymentPlan(p.source, p.ref_id, p.due_date, amount));
   }
 
   // A detected payment and a linked card's own payment that look like the
@@ -214,18 +211,18 @@
                   <input type="number" step="0.01" min="0" bind:value={choice} aria-label="Amount to plan with" />
                   <span class="quick">
                     {#if p.amount_basis === "planned"}
-                      <button type="button" class="small ghost" title="Back to the {p.source === 'card' ? (p.autopay ? 'autopay' : 'minimum') : 'detected average'}" onclick={() => saveChoice(p, null)}>Reset</button>
+                      <button type="button" class="small ghost" title="Back to the {p.autopay ? 'autopay' : 'last amount paid'} for this payment" onclick={() => saveChoice(p, null)}>Reset</button>
                     {/if}
                     <button type="button" class="small" onclick={() => (choosing = null)}>Cancel</button>
                     <button type="submit" class="small primary">Save</button>
                   </span>
                 </form>
               {:else if canChoose(p)}
-                <button class="pick" title="Set the amount to plan with" onclick={() => startChoose(p, i)}>
+                <button class="pick" title="Set the amount for this payment only" onclick={() => startChoose(p, i)}>
                   {e.amount != null ? fmtMoney(e.amount) : "varies"} ✎
                 </button>
               {:else if e.amount != null}{e.kind === "paycheck" || e.kind === "transfer" ? "+" : ""}{fmtMoney(e.amount)}{:else}varies{/if}
-              {#if p?.amount_basis && choosing !== i}<span class="basis">{({ minimum: "min", autopay: "autopay", planned: "planned", average: "avg" })[p.amount_basis]}</span>{/if}
+              {#if p?.amount_basis && choosing !== i}<span class="basis">{({ minimum: "min", autopay: "autopay", last: "last paid", planned: "planned", average: "avg" })[p.amount_basis]}</span>{/if}
               {#if e.kind === "paycheck" || e.kind === "transfer" || p?.estimated}<span class="basis" title="Projected, not stated">est.</span>{/if}
             </td>
             <td class="acct">

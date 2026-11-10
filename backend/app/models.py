@@ -97,11 +97,6 @@ class Account(Base):
     # autopay. It stands in for the minimum (whichever is larger) on the
     # timeline and in promo payoff maths. Set from the UI; sync never writes it.
     autopay_amount: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
-    # Credit and loan accounts: what the user plans to pay each month, in
-    # place of the minimum or autopay, until they change it. A planning
-    # figure only: whether a payment was made is still read from the synced
-    # transactions. Set from the UI; sync never writes it.
-    payment_amount: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     # Credit and loan accounts: leave this card's own payment off the
     # timeline, because a detected payment from checking already stands for
     # it. Its balance is still tracked. Set from the UI; sync never writes it.
@@ -337,10 +332,6 @@ class RecurringStream(Base):
     # charges, one-off purchases Plaid mistook for a pattern, and the like.
     # Sync never writes it, so a hidden stream stays hidden.
     hidden: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    # Set from the UI: the amount to plan with in place of Plaid's average,
-    # for a loan payment Plaid only sees from the paying side. Sync never
-    # writes it.
-    amount_override: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     # The transactions Plaid built the stream from, to tell when it is a
     # linked card's own payment seen from the paying side.
     transaction_ids: Mapped[list | None] = mapped_column(JSONB, nullable=True)
@@ -437,6 +428,42 @@ class Bill(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class PlannedPayment(Base):
+    """An amount the user chose for one card or loan payment, by its due date.
+
+    Each payment is its own: setting next month's leaves this month's alone.
+    A payment with none planned goes at the last amount paid (see
+    services.bills). A planning figure only: whether a payment was made is
+    still read from the synced transactions. Exactly one of account_id (a
+    card or loan's own payment) and stream_id (a loan payment Plaid sees only
+    from checking) is set. Set from the UI; sync never writes it.
+    """
+
+    __tablename__ = "planned_payments"
+    __table_args__ = (
+        UniqueConstraint("account_id", "due_date"),
+        UniqueConstraint("stream_id", "due_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    account_id: Mapped[str | None] = mapped_column(
+        ForeignKey("accounts.account_id", ondelete="CASCADE"), index=True, nullable=True
+    )
+    stream_id: Mapped[str | None] = mapped_column(
+        ForeignKey("recurring_streams.stream_id", ondelete="CASCADE"),
+        index=True,
+        nullable=True,
+    )
+    due_date: Mapped[date] = mapped_column(Date, nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Money, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

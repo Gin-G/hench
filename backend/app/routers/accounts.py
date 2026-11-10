@@ -2,25 +2,29 @@
 
 These are the read side of what services.enrich snapshots during sync, plus
 the edits the user makes on top of Plaid's data: account nicknames, which
-bank account pays a card or loan, its rate and any promo, and hiding a
-detected stream. Sync never
+bank account pays a card or loan, its rate and any promo, the amount
+chosen for one of its payments, and hiding a detected stream. Sync never
 writes any of them. Combining them into a dated timeline is services.bills' job, not this router's.
 """
 from __future__ import annotations
 
+from datetime import timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_session
-from ..models import Account, Item, RecurringStream
+from ..models import Account, Item, PlannedPayment, RecurringStream
 from ..schemas import (
     AccountOut,
     AccountUpdate,
+    PaymentPlanIn,
     RecurringStreamOut,
     RecurringStreamUpdate,
 )
+from ..services.bills import plan_drift
 
 router = APIRouter(tags=["accounts"])
 
@@ -68,8 +72,7 @@ async def update_account(
     session: AsyncSession = Depends(get_session),
 ) -> AccountOut:
     """Rename an account; for a card or loan, pick the bank account that pays
-    it, override its APR, set a fixed autopay or the payment to plan with, or
-    record a promotional rate.
+    it, override its APR, set a fixed autopay, or record a promotional rate.
 
     Those are the only edits; the rest is Plaid's.
     """
@@ -105,7 +108,7 @@ async def update_account(
     rate_fields = {
         k: v
         for k, v in changes.items()
-        if k in ("apr_override", "autopay_amount", "payment_amount", "payment_hidden",
+        if k in ("apr_override", "autopay_amount", "payment_hidden",
                  "promo_apr", "promo_ends_on", "promo_balance", "promo_deferred_interest")
     }
     if rate_fields:
@@ -158,17 +161,14 @@ async def update_recurring(
     body: RecurringStreamUpdate,
     session: AsyncSession = Depends(get_session),
 ) -> RecurringStream:
-    """Hide or unhide a detected stream on the upcoming timeline, set the
-    amount to plan with in place of Plaid's average, or mark it as debt,
-    essential or optional."""
+    """Hide or unhide a detected stream on the upcoming timeline, or mark it
+    as debt, essential or optional."""
     stream = await session.get(RecurringStream, stream_id)
     if stream is None:
         raise HTTPException(status_code=404, detail="Recurring stream not found")
     changes = body.model_dump(exclude_unset=True)
     if changes.get("hidden") is not None:
         stream.hidden = body.hidden
-    if "amount_override" in changes:
-        stream.amount_override = body.amount_override
     if changes.get("not_duplicate") is not None:
         stream.not_duplicate = body.not_duplicate
     if "commitment" in changes:
@@ -176,3 +176,39 @@ async def update_recurring(
     await session.flush()
     await session.refresh(stream)
     return stream
+
+
+@router.put("/payment-plans", status_code=204)
+async def set_payment_plan(
+    body: PaymentPlanIn,
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    """Choose the amount for one card or loan payment, by its due date; null
+    goes back to the usual amount (autopay, else the last amount paid).
+
+    Only that payment changes. An amount chosen before for the same payment,
+    under a due date Plaid has since moved a day or two, is replaced.
+    """
+    if body.source == "card":
+        account = await session.get(Account, body.ref_id)
+        if account is None or account.type not in ("credit", "loan"):
+            raise HTTPException(status_code=404, detail="Card or loan not found")
+        column, drift = PlannedPayment.account_id, plan_drift("MONTHLY")
+    else:
+        stream = await session.get(RecurringStream, body.ref_id)
+        if stream is None:
+            raise HTTPException(status_code=404, detail="Recurring stream not found")
+        column, drift = PlannedPayment.stream_id, plan_drift(stream.frequency)
+    await session.execute(
+        delete(PlannedPayment).where(
+            column == body.ref_id,
+            PlannedPayment.due_date.between(
+                body.due_date - timedelta(days=drift), body.due_date + timedelta(days=drift)
+            ),
+        )
+    )
+    if body.amount is not None:
+        plan = PlannedPayment(due_date=body.due_date, amount=body.amount)
+        setattr(plan, column.key, body.ref_id)
+        session.add(plan)
+    await session.flush()

@@ -34,7 +34,7 @@ from ..schemas import (
     NetWorthPoint,
     NetWorthResponse,
 )
-from .bills import _paid_cards, account_label, clean_name, planned_payment
+from .bills import _paid_cards, account_label, clean_name, planned_payment, stream_amount
 from .groups import DEBT, FOOD, UTILITIES, group_of
 from .ledger import balance_of
 from .sankey import _effective, own_flows
@@ -338,7 +338,7 @@ async def build_networth(session: AsyncSession, today: date) -> NetWorthResponse
         # Interest is charged to the card, and already in its payment.
         if s.category_detailed == "BANK_FEES_INTEREST_CHARGE":
             continue
-        amount = s.amount_override if s.amount_override is not None else s.average_amount
+        amount = stream_amount(s)[0]
         if not amount:
             continue
         commitments.append(

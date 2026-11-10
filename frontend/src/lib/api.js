@@ -95,7 +95,14 @@ export const api = {
     req("/recurring?include_hidden=true").then((streams) =>
       streams.filter((s) => s.hidden)
     ),
-  // Hide a detected stream, or set the amount to plan with (null clears).
+  // The amount chosen for one card or loan payment, by its due date; null
+  // goes back to the usual amount. Other months are left alone.
+  setPaymentPlan: (source, refId, dueDate, amount) =>
+    req("/payment-plans", {
+      method: "PUT",
+      body: JSON.stringify({ source, ref_id: refId, due_date: dueDate, amount }),
+    }),
+  // Hide a detected stream, or mark it debt, essential or optional.
   updateStream: (streamId, changes) =>
     req(`/recurring/${encodeURIComponent(streamId)}`, {
       method: "PATCH",
