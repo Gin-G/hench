@@ -5,7 +5,8 @@ Routes are mounted at root (no ``/api`` prefix): in the cluster the Traefik
 this service, and the Vite dev proxy does the same locally.
 
 Every route except /health requires a valid Cloudflare Access token for an
-allow-listed email; see access.py.
+allow-listed email; see access.py. Each email is its own user, who sees only
+their own data (tenancy.py), encrypted with their own key (keys.py).
 """
 from __future__ import annotations
 
@@ -13,12 +14,13 @@ import json
 import logging
 
 import plaid
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from . import access
 from .config import get_settings
+from .db import get_session
 from .routers import accounts, bills, link, networth, oauth, sankey, sync, transactions
 
 settings = get_settings()
@@ -38,6 +40,13 @@ elif settings.plaid_env == "production":
     )
 else:
     log.warning("Cloudflare Access verification is off (non-production dev mode)")
+
+if not settings.openbao_addr:
+    if settings.plaid_env == "production":
+        # Each user's key wrapped by a key sitting beside the database it
+        # protects is not the protection users were promised.
+        raise RuntimeError("OPENBAO_ADDR must be set when PLAID_ENV=production")
+    log.warning("OpenBao is not configured; data keys are wrapped with FERNET_KEY (dev mode)")
 
 
 @app.exception_handler(plaid.ApiException)
@@ -91,6 +100,12 @@ app.include_router(accounts.router)
 app.include_router(bills.router)
 app.include_router(networth.router)
 app.include_router(oauth.router)
+
+
+@app.get("/me", tags=["meta"], dependencies=[Depends(get_session)])
+async def me(request: Request) -> dict:
+    """Who is signed in: everything else the API returns is theirs alone."""
+    return {"email": request.state.user.email}
 
 
 @app.get("/health", tags=["meta"])

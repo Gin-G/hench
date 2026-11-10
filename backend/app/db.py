@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
+from fastapi import Request
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -41,9 +42,16 @@ engine = create_async_engine(
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
 
-async def get_session() -> AsyncIterator[AsyncSession]:
-    """FastAPI dependency yielding a session with commit/rollback handling."""
+async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
+    """FastAPI dependency yielding a session with commit/rollback handling,
+    scoped to the signed-in user: every query on it sees only their data
+    (see tenancy.py), with their key unlocked to read it."""
+    from . import tenancy, users
+
     async with SessionLocal() as session:
+        user = await users.for_request(session, request)
+        tenancy.set_user(user.id)
+        request.state.user = user
         try:
             yield session
             await session.commit()

@@ -8,7 +8,7 @@ writes any of them. Combining them into a dated timeline is services.bills' job,
 """
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import delete, select
@@ -58,10 +58,10 @@ async def list_accounts(
             select(Account, Item.institution_name)
             .join(Item, Account.item_id == Item.item_id)
             .options(selectinload(Account.liability))
-            .order_by(Item.institution_name, Account.name)
         )
     ).all()
-
+    # Names are encrypted, so sorted here rather than in SQL.
+    rows = sorted(rows, key=lambda r: ((r[1] or "").lower(), (r[0].name or "").lower()))
     return [_account_out(account, institution_name) for account, institution_name in rows]
 
 
@@ -148,11 +148,16 @@ async def list_recurring(
         stmt = stmt.where(RecurringStream.is_active.is_(True))
     if not include_hidden:
         stmt = stmt.where(RecurringStream.hidden.is_(False))
-    stmt = stmt.order_by(
-        RecurringStream.predicted_next_date.nulls_last(),
-        RecurringStream.description,
+    streams = (await session.scalars(stmt)).all()
+    # Descriptions are encrypted, so sorted here rather than in SQL.
+    return sorted(
+        streams,
+        key=lambda s: (
+            s.predicted_next_date is None,
+            s.predicted_next_date or date.min,
+            (s.description or "").lower(),
+        ),
     )
-    return list((await session.scalars(stmt)).all())
 
 
 @router.patch("/recurring/{stream_id}", response_model=RecurringStreamOut)

@@ -74,24 +74,24 @@ async def list_transactions(
                 Transaction.pfc_primary == category,
             )
         )
-    if search:
-        like = f"%{search}%"
-        conditions.append(
-            or_(Transaction.name.ilike(like), Transaction.merchant_name.ilike(like))
-        )
-
     base = select(Transaction).where(*conditions)
-    total = await session.scalar(
-        select(func.count()).select_from(base.subquery())
+    ordered = base.options(selectinload(Transaction.override)).order_by(
+        Transaction.date.desc(), Transaction.transaction_id
     )
-    txns = (
-        await session.scalars(
-            base.options(selectinload(Transaction.override))
-            .order_by(Transaction.date.desc(), Transaction.transaction_id)
-            .limit(limit)
-            .offset(offset)
+    if search:
+        # Names are encrypted, so a search reads every row the other filters
+        # leave and matches them here.
+        needle = search.lower()
+        found = [
+            t
+            for t in (await session.scalars(ordered)).all()
+            if needle in (t.name or "").lower() or needle in (t.merchant_name or "").lower()
+        ]
+        return TransactionList(
+            total=len(found), transactions=[_to_out(t) for t in found[offset : offset + limit]]
         )
-    ).all()
+    total = await session.scalar(select(func.count()).select_from(base.subquery()))
+    txns = (await session.scalars(ordered.limit(limit).offset(offset))).all()
     return TransactionList(
         total=total or 0, transactions=[_to_out(t) for t in txns]
     )

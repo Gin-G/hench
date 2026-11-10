@@ -2,8 +2,8 @@
 
 ``/oauth/google/start`` sends the browser to Google's consent screen and
 ``/oauth/google/callback`` stores the grant it comes back with. Both sit
-behind Cloudflare Access like every other route, so only the allow-listed
-user can complete a connection. The ``state`` round trip is additionally
+behind Cloudflare Access like every other route, so only an allow-listed
+user can complete a connection, and the grant is stored as theirs. The ``state`` round trip is additionally
 bound to that browser by a cookie, so a callback URL crafted elsewhere
 cannot attach someone else's mailbox.
 
@@ -21,7 +21,6 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_session
-from ..models import OAuthToken
 from ..services import google
 
 log = logging.getLogger("hench.oauth")
@@ -40,7 +39,7 @@ class GoogleStatus(BaseModel):
 
 @router.get("/status", response_model=GoogleStatus)
 async def status(session: AsyncSession = Depends(get_session)) -> GoogleStatus:
-    row = await session.get(OAuthToken, google.PROVIDER)
+    row = await google.grant(session)
     return GoogleStatus(
         configured=google.configured(),
         connected=row is not None,

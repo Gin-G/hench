@@ -17,6 +17,7 @@
   let months = $state([]);
   let month = $state(new Date().toISOString().slice(0, 7));
   let items = $state([]);
+  let me = $state(null);
   let syncing = $state(false);
   // Bumped to force Sankey and Transactions to re-fetch. They reload on a
   // month change alone, so after a sync or a fresh link — where month does not
@@ -55,6 +56,7 @@
 
   $effect(() => {
     loadMeta();
+    api.me().then((m) => (me = m)).catch(() => {});
   });
 </script>
 
@@ -73,6 +75,7 @@
     {/each}
     <Link onDone={refresh} />
     <button onclick={sync} disabled={syncing}>{syncing ? "Syncing…" : "Sync now"}</button>
+    {#if me}<span class="who" title="Signed in; you see only your own accounts">{me.email}</span>{/if}
   </div>
 </header>
 
@@ -133,6 +136,14 @@
     font-weight: 700;
     letter-spacing: 0.02em;
     color: var(--gold);
+  }
+  .who {
+    color: var(--muted, #888);
+    font-size: 0.85rem;
+    max-width: 14rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .logo {
     display: block;

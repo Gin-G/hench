@@ -72,8 +72,22 @@ cfAccess:
   aud: "67dabe01c37ac2b4ef2e2903add1bb43b78d3eeefc6f6ccdb05d88ee2c8f9765"
   # Checked by the API in addition to the Access policy, so loosening the
   # policy by mistake does not expose bank data.
+  # Each address is its own user with their own data and key. Add one here
+  # and to the Access policy to let someone in.
   allowedEmails:
     - nickco7@gmail.com
+  # Who the data from before separate users belongs to (and whose Longmont
+  # login the utility fetch uses). Empty = the first allowed email.
+  ownerEmail: ""
+# OpenBao Transit wraps each user's data key with a key of their own,
+# <keyPrefix><user id>. The backend authenticates with Kubernetes auth as
+# k8sRole; see README "Per-user encryption" for the policy it needs.
+openbao:
+  addr: http://openbao.openbao.svc.cluster.local:8200
+  transitMount: transit
+  keyPrefix: hench-user-
+  k8sRole: hench
+  k8sMount: kubernetes
 # Namespace-local firewall. BasicAuth is enforced at the ingress, so without
 # this anything already running in the cluster can reach the API and the
 # database directly and route around it entirely.

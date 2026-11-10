@@ -12,10 +12,25 @@ from datetime import date, datetime
 from decimal import Decimal
 from html import unescape
 
-from sqlalchemy import or_, select
+from functools import lru_cache
+
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import RecurringStream, Transaction
+
+@lru_cache(maxsize=256)
+def _like_regex(pattern: str) -> re.Pattern:
+    parts = []
+    for ch in pattern:
+        parts.append(".*" if ch == "%" else "." if ch == "_" else re.escape(ch))
+    return re.compile("".join(parts), re.IGNORECASE | re.DOTALL)
+
+
+def ilike(text: str | None, pattern: str) -> bool:
+    """SQL ILIKE, in Python: names are encrypted, so SQL cannot match them."""
+    return text is not None and _like_regex(pattern).fullmatch(text) is not None
+
 
 _MONEY = re.compile(r"(-?)\$\s*(-?[\d,]+\.\d{2})")
 
@@ -84,17 +99,18 @@ async def paid_per_bank(
     """
     rows = (
         await session.execute(
-            select(Transaction.date, Transaction.amount).where(
-                or_(
-                    Transaction.name.ilike(pattern),
-                    Transaction.merchant_name.ilike(pattern),
-                ),
-                Transaction.date >= since,
-            )
+            select(
+                Transaction.date,
+                Transaction.amount,
+                Transaction.name,
+                Transaction.merchant_name,
+            ).where(Transaction.date >= since)
         )
     ).all()
-    for on, paid in rows:
-        if abs(Decimal(paid) - amount) <= Decimal("1.00"):
+    for on, paid, name, merchant in rows:
+        if (ilike(name, pattern) or ilike(merchant, pattern)) and abs(
+            Decimal(paid) - amount
+        ) <= Decimal("1.00"):
             return on
     return None
 
@@ -104,32 +120,21 @@ async def latest_paid_per_bank(
 ) -> tuple[date, Decimal] | None:
     """The newest bank or card payment matching ``pattern``, of any amount,
     posted after ``after`` — for when the bill itself cannot be read."""
-    query = select(Transaction.date, Transaction.amount).where(
-        or_(
-            Transaction.name.ilike(pattern),
-            Transaction.merchant_name.ilike(pattern),
-        ),
-        Transaction.amount > 0,
-    )
+    query = select(
+        Transaction.date, Transaction.amount, Transaction.name, Transaction.merchant_name
+    ).where(Transaction.amount > 0)
     if after is not None:
         query = query.where(Transaction.date > after)
-    row = (
-        await session.execute(query.order_by(Transaction.date.desc()).limit(1))
-    ).first()
-    return (row[0], Decimal(row[1])) if row else None
+    for on, paid, name, merchant in (
+        await session.execute(query.order_by(Transaction.date.desc()))
+    ).all():
+        if ilike(name, pattern) or ilike(merchant, pattern):
+            return on, Decimal(paid)
+    return None
 
 
 async def hide_detected_streams(session: AsyncSession, pattern: str) -> None:
     """Hide Plaid's own guess at a bill that a source now supplies."""
-    streams = (
-        await session.scalars(
-            select(RecurringStream).where(
-                or_(
-                    RecurringStream.merchant_name.ilike(pattern),
-                    RecurringStream.description.ilike(pattern),
-                )
-            )
-        )
-    ).all()
-    for stream in streams:
-        stream.hidden = True
+    for stream in (await session.scalars(select(RecurringStream))).all():
+        if ilike(stream.merchant_name, pattern) or ilike(stream.description, pattern):
+            stream.hidden = True

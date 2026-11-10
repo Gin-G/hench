@@ -2,7 +2,8 @@
 
 The grant is ``gmail.readonly`` only: the stored refresh token can read mail
 and cannot send, change, or delete any. It is obtained once through the
-browser (routers.oauth) and kept Fernet-encrypted in ``oauth_tokens``.
+browser (routers.oauth) and kept in ``oauth_tokens``, one per user,
+encrypted with that user's key.
 
 Calls are blocking urllib, so the async wrappers push them onto a thread.
 """
@@ -17,10 +18,11 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import get_settings
-from ..crypto import decrypt, encrypt
+from ..crypto import legacy
 from ..models import OAuthToken
 from .sources import visible_lines
 
@@ -43,6 +45,11 @@ class Email:
     sender: str
     received: datetime
     lines: list[str]
+
+
+async def grant(session: AsyncSession) -> OAuthToken | None:
+    """The signed-in user's Google grant, if they connected one."""
+    return await session.scalar(select(OAuthToken).where(OAuthToken.provider == PROVIDER))
 
 
 def configured() -> bool:
@@ -118,21 +125,21 @@ def _exchange_sync(code: str) -> tuple[str, str, str]:
 async def connect(session: AsyncSession, code: str) -> str:
     """Trade an authorization code for a stored grant. Returns the address."""
     refresh, scope, email = await asyncio.to_thread(_exchange_sync, code)
-    row = await session.get(OAuthToken, PROVIDER)
+    row = await grant(session)
     if row is None:
         row = OAuthToken(provider=PROVIDER)
         session.add(row)
-    row.refresh_token, row.scope, row.account_email = encrypt(refresh), scope, email
+    row.refresh_token, row.scope, row.account_email = refresh, scope, email
     await session.flush()
     return email
 
 
 async def disconnect(session: AsyncSession) -> None:
-    row = await session.get(OAuthToken, PROVIDER)
+    row = await grant(session)
     if row is None:
         return
     try:
-        await asyncio.to_thread(_post, _REVOKE_URL, {"token": decrypt(row.refresh_token)})
+        await asyncio.to_thread(_post, _REVOKE_URL, {"token": legacy(row.refresh_token)})
     except Exception:  # noqa: BLE001 - forget it locally whatever Google says
         pass
     await session.delete(row)
@@ -200,7 +207,7 @@ def _search_sync(refresh_token: str, query: str, limit: int) -> list[Email]:
 
 async def search(session: AsyncSession, query: str, limit: int = 5) -> list[Email]:
     """Newest-first messages matching a Gmail search query."""
-    row = await session.get(OAuthToken, PROVIDER)
+    row = await grant(session)
     if row is None:
         raise GoogleAuthError("Gmail is not connected")
-    return await asyncio.to_thread(_search_sync, decrypt(row.refresh_token), query, limit)
+    return await asyncio.to_thread(_search_sync, legacy(row.refresh_token), query, limit)

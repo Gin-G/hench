@@ -8,6 +8,8 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 
+import json
+
 from sqlalchemy import (
     Boolean,
     Date,
@@ -17,12 +19,14 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    TypeDecorator,
     UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from . import keys, tenancy
 from .db import Base
 
 # Money is stored as NUMERIC and therefore comes back as Decimal, never float.
@@ -31,7 +35,70 @@ Money = Numeric(14, 2)
 Rate = Numeric(7, 4)
 
 
-class Item(Base):
+class Encrypted(TypeDecorator):
+    """Text encrypted with its owner's data key (see keys.py).
+
+    Written for the user in scope; read back with whichever user's key it
+    names. SQL cannot compare or search these, so filtering on them happens
+    in Python after the rows are loaded.
+    """
+
+    impl = Text
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        return None if value is None else keys.encrypt(str(value))
+
+    def process_result_value(self, value, dialect):
+        return None if value is None else keys.decrypt(value)
+
+
+class EncryptedJSON(TypeDecorator):
+    """A JSON document, encrypted as for ``Encrypted``."""
+
+    impl = Text
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        return None if value is None else keys.encrypt(json.dumps(value, default=str))
+
+    def process_result_value(self, value, dialect):
+        return None if value is None else json.loads(keys.decrypt(value))
+
+
+class User(Base):
+    """Someone who signs in, by their Cloudflare Access (Google) email.
+
+    Created on first sign-in. Everything else belongs to exactly one user,
+    and each user's identifying text is encrypted with their own key: the
+    random data key wrapped here by OpenBao (``key_provider`` "openbao") or,
+    in local dev, by FERNET_KEY ("local").
+    """
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    email: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    wrapped_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    key_provider: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class Owned:
+    """Belongs to one user. Every query on it is filtered to the user in
+    scope, and new rows default to that user (see tenancy.py)."""
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        default=tenancy.current_user_id,
+    )
+
+
+class Item(Owned, Base):
     """A Plaid Item = one set of credentials at one institution."""
 
     __tablename__ = "items"
@@ -40,8 +107,8 @@ class Item(Base):
     item_id: Mapped[str] = mapped_column(String, primary_key=True)
     institution_id: Mapped[str | None] = mapped_column(String, nullable=True)
     institution_name: Mapped[str | None] = mapped_column(String, nullable=True)
-    # Fernet-encrypted Plaid access token.
-    access_token: Mapped[str] = mapped_column(Text, nullable=False)
+    # Plaid access token, encrypted with the owner's key.
+    access_token: Mapped[str] = mapped_column(Encrypted, nullable=False)
     # /transactions/sync cursor; null until first sync completes.
     transactions_cursor: Mapped[str | None] = mapped_column(Text, nullable=True)
     # "active" | "login_required" — drives Link update-mode re-auth.
@@ -64,22 +131,22 @@ class Item(Base):
     )
 
 
-class Account(Base):
+class Account(Owned, Base):
     __tablename__ = "accounts"
 
     account_id: Mapped[str] = mapped_column(String, primary_key=True)
     item_id: Mapped[str] = mapped_column(
         ForeignKey("items.item_id", ondelete="CASCADE"), index=True, nullable=False
     )
-    name: Mapped[str | None] = mapped_column(String, nullable=True)
-    official_name: Mapped[str | None] = mapped_column(String, nullable=True)
-    mask: Mapped[str | None] = mapped_column(String, nullable=True)
+    name: Mapped[str | None] = mapped_column(Encrypted, nullable=True)
+    official_name: Mapped[str | None] = mapped_column(Encrypted, nullable=True)
+    mask: Mapped[str | None] = mapped_column(Encrypted, nullable=True)
     type: Mapped[str | None] = mapped_column(String, nullable=True)
     subtype: Mapped[str | None] = mapped_column(String, nullable=True)
     # Set from the UI. Institutions often name every card identically (Chase
     # sends "CREDIT CARD" for all of them), so this wins over name when shown.
     # Sync never writes it.
-    nickname: Mapped[str | None] = mapped_column(String, nullable=True)
+    nickname: Mapped[str | None] = mapped_column(Encrypted, nullable=True)
     # Credit and loan accounts: the bank account their payment is drawn from,
     # set from the UI. Null means checking. Sync never writes it.
     pay_from_account_id: Mapped[str | None] = mapped_column(
@@ -136,7 +203,7 @@ class Account(Base):
     )
 
 
-class Transaction(Base):
+class Transaction(Owned, Base):
     __tablename__ = "transactions"
 
     # Plaid transaction_id is the natural key — idempotent upserts.
@@ -155,8 +222,8 @@ class Transaction(Base):
     iso_currency_code: Mapped[str | None] = mapped_column(String, nullable=True)
     date: Mapped[date] = mapped_column(Date, index=True, nullable=False)
     authorized_date: Mapped[date | None] = mapped_column(Date, nullable=True)
-    name: Mapped[str | None] = mapped_column(String, nullable=True)
-    merchant_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    name: Mapped[str | None] = mapped_column(Encrypted, nullable=True)
+    merchant_name: Mapped[str | None] = mapped_column(Encrypted, nullable=True)
     pending: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     payment_channel: Mapped[str | None] = mapped_column(String, nullable=True)
 
@@ -191,7 +258,7 @@ class Transaction(Base):
     )
 
 
-class CategoryOverride(Base):
+class CategoryOverride(Owned, Base):
     """A manual, per-transaction category correction from the UI."""
 
     __tablename__ = "category_overrides"
@@ -215,13 +282,13 @@ class CategoryOverride(Base):
     transaction: Mapped[Transaction] = relationship(back_populates="override")
 
 
-class Liability(Base):
+class Liability(Owned, Base):
     """Credit card / student loan / mortgage detail from /liabilities/get.
 
     One row per account that Plaid reports a liability for, so this is keyed on
     ``account_id`` rather than carrying its own id. Plaid returns three
     differently-shaped payloads (credit, student, mortgage); rather than three
-    tables for a single-user app this is their union with a ``liability_type``
+    tables this is their union with a ``liability_type``
     discriminator, and everything unmodelled is kept in ``raw`` so a forecast
     can reach for it later without another migration.
 
@@ -269,7 +336,7 @@ class Liability(Base):
     expected_payoff_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     loan_status: Mapped[str | None] = mapped_column(String, nullable=True)
 
-    raw: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    raw: Mapped[dict | None] = mapped_column(EncryptedJSON, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -280,7 +347,7 @@ class Liability(Base):
     account: Mapped[Account] = relationship(back_populates="liability")
 
 
-class RecurringStream(Base):
+class RecurringStream(Owned, Base):
     """A detected recurring inflow or outflow from /transactions/recurring/get.
 
     Inflow streams are where paydays come from; outflow streams are bills and
@@ -304,8 +371,8 @@ class RecurringStream(Base):
     # "inflow" (income) | "outflow" (bills, subscriptions)
     direction: Mapped[str] = mapped_column(String, index=True, nullable=False)
 
-    description: Mapped[str | None] = mapped_column(String, nullable=True)
-    merchant_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    description: Mapped[str | None] = mapped_column(Encrypted, nullable=True)
+    merchant_name: Mapped[str | None] = mapped_column(Encrypted, nullable=True)
 
     # WEEKLY | BIWEEKLY | SEMI_MONTHLY | MONTHLY | ANNUALLY | UNKNOWN
     frequency: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -351,7 +418,7 @@ class RecurringStream(Base):
     )
 
 
-class Bill(Base):
+class Bill(Owned, Base):
     """A bill entered by hand, for everything Plaid cannot see.
 
     Rent paid by check, a utility on an unlinked card, a car loan at a lender
@@ -366,9 +433,11 @@ class Bill(Base):
     """
 
     __tablename__ = "bills"
+    # One bill per fetcher per user.
+    __table_args__ = (UniqueConstraint("user_id", "source"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String, nullable=False)
+    name: Mapped[str] = mapped_column(Encrypted, nullable=False)
     # Expected payment. Null for a bill whose amount is not known in advance.
     amount: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     # once | weekly | biweekly | monthly | quarterly | annually
@@ -377,7 +446,7 @@ class Bill(Base):
     due_day: Mapped[int] = mapped_column(Integer, nullable=False)
     autopay: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     category: Mapped[str | None] = mapped_column(String, nullable=True)
-    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Encrypted, nullable=True)
     # The account it is paid from: a bank account, or a credit card when the
     # bill is charged to one. Null means checking.
     pay_from_account_id: Mapped[str | None] = mapped_column(
@@ -408,7 +477,7 @@ class Bill(Base):
     # --- Kept up to date by sync rather than by hand -----------------------
     # Null for a bill entered by hand. Otherwise the fetcher that owns it
     # ("longmont"), which overwrites amount and due date on each run.
-    source: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
+    source: Mapped[str | None] = mapped_column(String, nullable=True)
     source_synced_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -420,7 +489,7 @@ class Bill(Base):
     # good figures meanwhile.
     source_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     # What the fetcher read, for display and for debugging a parse.
-    source_detail: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    source_detail: Mapped[dict | None] = mapped_column(EncryptedJSON, nullable=True)
 
     # Cleared when a one-off bill is paid, or by hand to stop a bill without
     # losing its history.
@@ -436,7 +505,7 @@ class Bill(Base):
     )
 
 
-class PlannedPayment(Base):
+class PlannedPayment(Owned, Base):
     """An amount the user chose for one card or loan payment, by its due date.
 
     Each payment is its own: setting next month's leaves this month's alone.
@@ -472,7 +541,7 @@ class PlannedPayment(Base):
     )
 
 
-class Holding(Base):
+class Holding(Owned, Base):
     """Something owned or owed that is not linked: the home, the car, a
     retirement account, the mortgage, a loan at a lender Plaid cannot reach.
 
@@ -484,7 +553,7 @@ class Holding(Base):
     __tablename__ = "holdings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String, nullable=False)
+    name: Mapped[str] = mapped_column(Encrypted, nullable=False)
     # "asset" | "debt"
     kind: Mapped[str] = mapped_column(String, nullable=False)
     # home | vehicle | retirement | investment | cash | other (assets);
@@ -497,7 +566,7 @@ class Holding(Base):
     secured_by_id: Mapped[int | None] = mapped_column(
         ForeignKey("holdings.id", ondelete="SET NULL"), nullable=True
     )
-    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Encrypted, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -515,7 +584,7 @@ class Holding(Base):
     )
 
 
-class HoldingValue(Base):
+class HoldingValue(Owned, Base):
     """One dated figure for a holding; the latest on or before a date is
     what it was worth then."""
 
@@ -532,21 +601,25 @@ class HoldingValue(Base):
     holding: Mapped[Holding] = relationship(back_populates="values")
 
 
-class OAuthToken(Base):
+class OAuthToken(Owned, Base):
     """A long-lived grant from a third party, e.g. read-only Gmail.
 
-    One row per provider in a single-user app. The refresh token is
-    Fernet-encrypted like Plaid access tokens, and so is orphaned by the same
-    fernet_key rotation — reconnecting from the UI replaces it.
+    One row per provider per user. The refresh token, and whose mailbox it
+    reads, are encrypted with that user's key.
     """
 
     __tablename__ = "oauth_tokens"
 
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+        default=tenancy.current_user_id,
+    )
     provider: Mapped[str] = mapped_column(String, primary_key=True)
     # Whose account the grant is for, shown in the UI.
-    account_email: Mapped[str | None] = mapped_column(String, nullable=True)
+    account_email: Mapped[str | None] = mapped_column(Encrypted, nullable=True)
     scope: Mapped[str] = mapped_column(String, nullable=False)
-    refresh_token: Mapped[str] = mapped_column(Text, nullable=False)
+    refresh_token: Mapped[str] = mapped_column(Encrypted, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -558,7 +631,7 @@ class OAuthToken(Base):
     )
 
 
-class Rule(Base):
+class Rule(Owned, Base):
     """Merchant-pattern -> category mapping, applied during sync.
 
     ``match_type`` is "contains" (case-insensitive substring) or "regex".
@@ -578,3 +651,6 @@ class Rule(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+tenancy.install(Owned)

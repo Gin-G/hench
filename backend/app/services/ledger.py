@@ -91,17 +91,17 @@ async def _already_landed(
     """
     name = clean_name(stream.description or "")
     if name:
-        posted = await session.scalar(
-            select(Transaction.transaction_id)
-            .where(
-                Transaction.account_id == stream.account_id,
-                Transaction.amount < 0,
-                Transaction.date >= on - _EARLY_BY,
-                Transaction.name.ilike(f"{name}%"),
+        # Names are encrypted, so matched here rather than in SQL.
+        names = (
+            await session.scalars(
+                select(Transaction.name).where(
+                    Transaction.account_id == stream.account_id,
+                    Transaction.amount < 0,
+                    Transaction.date >= on - _EARLY_BY,
+                )
             )
-            .limit(1)
-        )
-        if posted is not None:
+        ).all()
+        if any(n and n.lower().startswith(name.lower()) for n in names):
             return True
     return bool(
         account is not None

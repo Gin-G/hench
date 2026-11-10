@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from plaid.model.country_code import CountryCode
 from plaid.model.institutions_get_by_id_request import InstitutionsGetByIdRequest
 from plaid.model.item_get_request import ItemGetRequest
@@ -16,7 +16,7 @@ from plaid.model.products import Products
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import get_settings
-from ..crypto import decrypt, encrypt
+from ..crypto import legacy
 from ..db import get_session
 from ..models import Item
 from ..plaid_client import get_plaid_client
@@ -47,6 +47,7 @@ def _require_plaid_creds() -> None:
 @router.post("/create_link_token", response_model=CreateLinkTokenResponse)
 async def create_link_token(
     body: CreateLinkTokenRequest,
+    request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> CreateLinkTokenResponse:
     _require_plaid_creds()
@@ -54,7 +55,7 @@ async def create_link_token(
     client = get_plaid_client()
 
     kwargs = dict(
-        user=LinkTokenCreateRequestUser(client_user_id="hench-single-user"),
+        user=LinkTokenCreateRequestUser(client_user_id=f"hench-user-{request.state.user.id}"),
         client_name=settings.link_name,
         country_codes=[CountryCode(c) for c in settings.plaid_country_codes],
         language="en",
@@ -70,7 +71,7 @@ async def create_link_token(
         item = await session.get(Item, body.item_id)
         if item is None:
             raise HTTPException(status_code=404, detail="unknown item_id")
-        kwargs["access_token"] = decrypt(item.access_token)
+        kwargs["access_token"] = legacy(item.access_token)
     else:
         kwargs["products"] = [Products(p) for p in settings.plaid_products]
         # Only valid on an initial link — update mode rejects it.
@@ -123,11 +124,12 @@ async def exchange_public_token(
 
     item = await session.get(Item, item_id)
     if item is None:
-        item = Item(item_id=item_id, access_token=encrypt(access_token))
+        # Encrypted with the signed-in user's key as it is written.
+        item = Item(item_id=item_id, access_token=access_token)
         session.add(item)
     else:
         # Re-link / update-mode completion: refresh the stored token.
-        item.access_token = encrypt(access_token)
+        item.access_token = access_token
     item.institution_id = institution_id
     item.institution_name = institution_name
     item.status = "active"

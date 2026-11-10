@@ -93,6 +93,32 @@ class Settings(BaseSettings):
         default_factory=list, alias="CF_ACCESS_ALLOWED_EMAILS"
     )
 
+    # Who the data from before there were separate users belongs to, and
+    # who the Longmont utility login is for. Defaults to the first allowed
+    # email above.
+    owner_email: str = Field(default="", alias="HENCH_OWNER_EMAIL")
+
+    # --- OpenBao Transit: per-user data keys (see keys.py) ------------------
+    # Unset = keys wrapped with FERNET_KEY, which production refuses.
+    openbao_addr: str = Field(default="", alias="OPENBAO_ADDR")
+    openbao_transit_mount: str = Field(default="transit", alias="OPENBAO_TRANSIT_MOUNT")
+    openbao_key_prefix: str = Field(default="hench-user-", alias="OPENBAO_KEY_PREFIX")
+    # Either a token, or a Kubernetes auth role logged in to with the pod's
+    # service account token.
+    openbao_token: str = Field(default="", alias="OPENBAO_TOKEN")
+    openbao_k8s_role: str = Field(default="hench", alias="OPENBAO_K8S_ROLE")
+    openbao_k8s_mount: str = Field(default="kubernetes", alias="OPENBAO_K8S_MOUNT")
+    openbao_k8s_jwt_path: str = Field(
+        default="/var/run/secrets/kubernetes.io/serviceaccount/token",
+        alias="OPENBAO_K8S_JWT_PATH",
+    )
+    openbao_cacert: str = Field(default="", alias="OPENBAO_CACERT")
+
+    @property
+    def owner(self) -> str:
+        email = self.owner_email or next(iter(self.cf_access_allowed_emails), "")
+        return (email or "owner@localhost").lower()
+
     @property
     def cf_access_enabled(self) -> bool:
         return bool(self.cf_access_team_domain and self.cf_access_aud)

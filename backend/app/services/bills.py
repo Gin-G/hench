@@ -16,7 +16,7 @@ import re
 from datetime import date, timedelta
 from decimal import ROUND_UP, Decimal
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -136,23 +136,33 @@ async def _card_credits(
         return {}
     rows = (
         await session.execute(
-            select(Transaction.account_id, Transaction.date, Transaction.amount)
+            select(
+                Transaction.account_id,
+                Transaction.date,
+                Transaction.amount,
+                Transaction.category_primary,
+                Transaction.pfc_primary,
+                Transaction.name,
+            )
             .where(
                 Transaction.account_id.in_(debt_ids),
                 Transaction.amount < 0,
                 Transaction.date >= today - timedelta(days=62),
-                or_(
-                    Transaction.category_primary.in_(_PAYMENT_CATEGORIES),
-                    Transaction.pfc_primary.in_(_PAYMENT_CATEGORIES),
-                    Transaction.name.ilike("%payment%"),
-                    Transaction.name.ilike("%autopay%"),
-                ),
             )
             .order_by(Transaction.date.desc())
         )
     ).all()
     credits: dict[str, list[tuple[date, Decimal]]] = {}
-    for account_id, on, amount in rows:
+    for account_id, on, amount, category, pfc, name in rows:
+        # Names are encrypted, so the wording is checked here, not in SQL.
+        wording = (name or "").lower()
+        if not (
+            category in _PAYMENT_CATEGORIES
+            or pfc in _PAYMENT_CATEGORIES
+            or "payment" in wording
+            or "autopay" in wording
+        ):
+            continue
         credits.setdefault(account_id, []).append((on, -Decimal(amount)))
     return credits
 

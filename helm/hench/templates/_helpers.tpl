@@ -112,6 +112,22 @@ Plaid + Fernet secrets come from the ESO-managed config secret.
 - name: GOOGLE_REDIRECT_URI
   value: {{ printf "https://%s/api/oauth/google/callback" .Values.frontend.fqdn | quote }}
 {{- end }}
+{{- with .Values.cfAccess.ownerEmail }}
+- name: HENCH_OWNER_EMAIL
+  value: {{ . | quote }}
+{{- end }}
+# Per-user data keys, wrapped by OpenBao Transit (see backend app/keys.py).
+# The pod logs in with its service account token via Kubernetes auth.
+- name: OPENBAO_ADDR
+  value: {{ required "openbao.addr is required" .Values.openbao.addr | quote }}
+- name: OPENBAO_TRANSIT_MOUNT
+  value: {{ .Values.openbao.transitMount | quote }}
+- name: OPENBAO_KEY_PREFIX
+  value: {{ .Values.openbao.keyPrefix | quote }}
+- name: OPENBAO_K8S_ROLE
+  value: {{ .Values.openbao.k8sRole | quote }}
+- name: OPENBAO_K8S_MOUNT
+  value: {{ .Values.openbao.k8sMount | quote }}
 - name: LOG_LEVEL
   value: {{ .Values.backend.env.LOG_LEVEL | quote }}
 - name: HOST

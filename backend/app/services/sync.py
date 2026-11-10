@@ -17,12 +17,14 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..crypto import decrypt
-from ..models import Account, Item, Transaction
+from .. import tenancy, users
+from ..crypto import legacy
+from ..models import Account, Item, OAuthToken, Transaction, User
 from ..plaid_client import get_plaid_client
 from ..schemas import SyncResult
 from . import enrich
 from . import rules as rules_svc
+from ..config import get_settings
 from .longmont import sync_longmont
 from .xcel import sync_xcel
 
@@ -118,7 +120,7 @@ async def _upsert_transactions(
 async def sync_item(session: AsyncSession, item: Item) -> SyncResult:
     """Run a full sync loop for a single Item. Commits via caller's session."""
     client = get_plaid_client()
-    access_token = decrypt(item.access_token)
+    access_token = legacy(item.access_token)
     compiled_rules = await rules_svc.load_rules(session)
 
     cursor = item.transactions_cursor
@@ -184,29 +186,58 @@ async def sync_item(session: AsyncSession, item: Item) -> SyncResult:
     )
 
 
-async def sync_all(session: AsyncSession) -> list[SyncResult]:
-    items = (await session.scalars(select(Item))).all()
-    results = []
-    for item in items:
-        try:
-            results.append(await sync_item(session, item))
-            # Commit per Item so one Item's failure cannot discard the work of
-            # the Items that already succeeded.
-            await session.commit()
-        except Exception:  # noqa: BLE001 - one bad item shouldn't stop the rest
-            log.exception("sync failed for item=%s", item.item_id)
-            # Without this the session stays in pending-rollback and every
-            # subsequent Item fails on a PendingRollbackError rather than on
-            # anything to do with that Item.
-            await session.rollback()
+async def _isolated(session: AsyncSession, what: str, work) -> object | None:
+    """Run one unit of sync work and commit it, so one failure cannot discard
+    the work of those that already succeeded."""
+    try:
+        result = await work()
+        await session.commit()
+        return result
+    except Exception:  # noqa: BLE001 - one bad item shouldn't stop the rest
+        log.exception("%s failed", what)
+        # Without this the session stays in pending-rollback and everything
+        # after fails on a PendingRollbackError rather than on its own.
+        await session.rollback()
+        return None
 
-    # Bills read from outside: a portal, a mailbox. Isolated like the Items
-    # above: one being down must not undo work that already committed.
-    for name, source in (("longmont", sync_longmont), ("xcel", sync_xcel)):
+
+async def sync_user(session: AsyncSession, user: User) -> list[SyncResult]:
+    """Every Item one user has linked, then the bills read from outside for
+    them. Runs in that user's scope, with their key unlocked."""
+    await users.unlock(session, user)
+    results = []
+    with tenancy.as_user(user.id):
+        for item in (await session.scalars(select(Item))).all():
+            result = await _isolated(
+                session, f"sync of item={item.item_id}", lambda: sync_item(session, item)
+            )
+            if result is not None:
+                results.append(result)
+
+        # Bills read from outside: the Longmont portal login is the owner's;
+        # a mailbox is read for whoever connected one.
+        sources = []
+        if user.email == get_settings().owner:
+            sources.append(("longmont", sync_longmont))
+        if await session.scalar(select(OAuthToken.provider).limit(1)) is not None:
+            sources.append(("xcel", sync_xcel))
+        for name, source in sources:
+            status = await _isolated(
+                session, f"{name} sync for user={user.id}", lambda: source(session)
+            )
+            log.info("%s user=%s: %s", name, user.id, status)
+    return results
+
+
+async def sync_all(session: AsyncSession) -> list[SyncResult]:
+    """Every user's Items, each in its own user's scope."""
+    with tenancy.as_system():
+        everyone = (await session.scalars(select(User).order_by(User.id))).all()
+    results = []
+    for user in everyone:
         try:
-            log.info("%s: %s", name, await source(session))
-            await session.commit()
-        except Exception:  # noqa: BLE001
-            log.exception("%s sync failed", name)
+            results += await sync_user(session, user)
+        except Exception:  # noqa: BLE001 - say, their key could not be unlocked
+            log.exception("sync failed for user=%s", user.id)
             await session.rollback()
     return results

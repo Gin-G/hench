@@ -27,6 +27,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ public_token: publicToken }),
     }),
+  // Who is signed in; everything else returned is theirs alone.
+  me: () => req("/me"),
   items: () => req("/items"),
   syncNow: (itemId = null) =>
     req(`/sync${itemId ? `?item_id=${encodeURIComponent(itemId)}` : ""}`, {

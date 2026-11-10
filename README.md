@@ -52,5 +52,46 @@ The API serves routes at root (e.g. `/sankey`); the ingress maps `/api/*`.
 Migrations run in an init container; transactions sync runs nightly via the
 CronJob and on demand via the `SYNC_UPDATES_AVAILABLE` webhook at `/api/webhook`.
 
-Auth is network-level only (single-user homelab); OIDC middleware can be added
-in `backend/app/main.py` without touching routers.
+## Users and per-user encryption
+
+Sign-in is Cloudflare Access (Google). Every allow-listed email
+(`cfAccess.allowedEmails`, and the Access policy) is its own user, created on
+first sign-in, with their own linked banks, bills, plan and net worth. Every
+query is filtered to the signed-in user by one session hook
+(`backend/app/tenancy.py`); a query run with no user in scope fails.
+
+Each user's identifying text (account names and numbers, transaction and
+merchant names, bill and holding names and notes, Liability and bill source
+details, Plaid and Google tokens) is encrypted with their own data key. That
+key is stored wrapped by an OpenBao Transit key of their own,
+`hench-user-<id>` (`backend/app/keys.py`). Amounts and dates stay plain so
+SQL can still filter and sum them. A database dump or backup alone shows
+numbers with no names attached. The app's OpenBao identity can unwrap every
+user's key (the nightly sync writes data while users are away), so this
+does not hide data from whoever runs the cluster.
+
+One-time OpenBao setup, before deploying:
+
+```sh
+bao secrets enable transit
+bao policy write hench-transit - <<'POLICY'
+path "transit/keys/hench-user-*"    { capabilities = ["create", "update"] }
+path "transit/encrypt/hench-user-*" { capabilities = ["update"] }
+path "transit/decrypt/hench-user-*" { capabilities = ["update"] }
+POLICY
+bao write auth/kubernetes/role/hench \
+  bound_service_account_names=default \
+  bound_service_account_namespaces=hench \
+  policies=hench-transit ttl=1h
+```
+
+The backend refuses to start in production without `OPENBAO_ADDR`. The init
+container runs `python -m app.cli encrypt` after migrations, which encrypts
+anything still in plaintext (a no-op once done). Other maintenance:
+`python -m app.cli users` lists users, `users set-email ID EMAIL` fixes one,
+and `keys rewrap` moves keys wrapped locally (dev, with `FERNET_KEY`) into
+OpenBao.
+
+Data from before there were users belongs to `cfAccess.ownerEmail`, or the
+first allowed email when that is empty. The Longmont utility login is that
+user's too; a Gmail-read bill (Xcel) is read for whoever connected Gmail.
