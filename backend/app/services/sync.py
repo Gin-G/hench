@@ -7,7 +7,7 @@ same response. Rules are applied to set the effective category.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from plaid.model.transactions_sync_request import TransactionsSyncRequest
 from plaid.model.transactions_sync_request_options import (
@@ -23,6 +23,7 @@ from ..models import Account, Item, OAuthToken, Transaction, User
 from ..plaid_client import get_plaid_client
 from ..schemas import SyncResult
 from . import enrich
+from .budgets import alert_new_charges
 from . import rules as rules_svc
 from ..config import get_settings
 from .longmont import sync_longmont
@@ -93,6 +94,7 @@ async def _upsert_transactions(
             name=txn.get("name"),
             merchant_name=txn.get("merchant_name"),
             pending=bool(txn.get("pending", False)),
+            pending_transaction_id=txn.get("pending_transaction_id"),
             payment_channel=txn.get("payment_channel"),
             pfc_primary=pfc_primary,
             pfc_detailed=pfc_detailed,
@@ -201,6 +203,16 @@ async def _isolated(session: AsyncSession, what: str, work) -> object | None:
         return None
 
 
+async def alert_safely(session: AsyncSession, user: User) -> None:
+    """Budget alerts after a sync that must not fail because of them (a
+    webhook's): in a savepoint, so a failure leaves the sync's work intact."""
+    try:
+        async with session.begin_nested():
+            await alert_new_charges(session, user, date.today())
+    except Exception:  # noqa: BLE001 - alerts are best-effort
+        log.exception("budget alerts for user=%s failed", user.id)
+
+
 async def sync_user(session: AsyncSession, user: User) -> list[SyncResult]:
     """Every Item one user has linked, then the bills read from outside for
     them. Runs in that user's scope, with their key unlocked."""
@@ -213,6 +225,11 @@ async def sync_user(session: AsyncSession, user: User) -> list[SyncResult]:
             )
             if result is not None:
                 results.append(result)
+        await _isolated(
+            session,
+            f"budget alerts for user={user.id}",
+            lambda: alert_new_charges(session, user, date.today()),
+        )
 
         # Bills read from outside: the Longmont portal login is the owner's;
         # a mailbox is read for whoever connected one.

@@ -114,6 +114,17 @@ class Settings(BaseSettings):
     )
     openbao_cacert: str = Field(default="", alias="OPENBAO_CACERT")
 
+    # --- ntfy (budget push notifications) -----------------------------------
+    # Where the backend publishes: in-cluster, the ntfy Service. Empty = off.
+    ntfy_url: str = Field(default="", alias="NTFY_URL")
+    # What a phone subscribes to: the public address of the same server.
+    # Defaults to ntfy_url.
+    ntfy_public_url: str = Field(default="", alias="NTFY_PUBLIC_URL")
+    # Access token of the ntfy user allowed to publish to hench-* topics.
+    ntfy_token: str = Field(default="", alias="NTFY_TOKEN")
+    # The app's own address, opened by tapping a notification.
+    app_url: str = Field(default="", alias="HENCH_APP_URL")
+
     @property
     def owner(self) -> str:
         email = self.owner_email or next(iter(self.cf_access_allowed_emails), "")

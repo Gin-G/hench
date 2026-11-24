@@ -15,7 +15,7 @@ from .. import tenancy, users
 from ..db import get_session
 from ..models import Item, User
 from ..schemas import ItemOut, SyncResult
-from ..services.sync import sync_item, sync_user
+from ..services.sync import alert_safely, sync_item, sync_user
 
 log = logging.getLogger("hench.sync")
 router = APIRouter(tags=["sync"])
@@ -68,16 +68,19 @@ async def plaid_webhook(
         return {"status": "unknown_item"}
     await users.unlock(session, owner)
     with tenancy.as_user(owner.id):
-        return await _handle_webhook(session, body, item_id)
+        return await _handle_webhook(session, owner, body, item_id)
 
 
-async def _handle_webhook(session: AsyncSession, body: dict, item_id: str) -> dict:
+async def _handle_webhook(
+    session: AsyncSession, owner: User, body: dict, item_id: str
+) -> dict:
     webhook_type = body.get("webhook_type")
     webhook_code = body.get("webhook_code")
     item = await session.get(Item, item_id)
 
     if webhook_type == "TRANSACTIONS" and webhook_code == "SYNC_UPDATES_AVAILABLE":
         result = await sync_item(session, item)
+        await alert_safely(session, owner)
         return {"status": "synced", "result": result.model_dump()}
 
     # Item needs re-auth — flag it so the UI can offer Link update mode.

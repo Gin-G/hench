@@ -1,6 +1,7 @@
 <script>
   import { api } from "./lib/api.js";
   import Bills from "./lib/Bills.svelte";
+  import Budgets from "./lib/Budgets.svelte";
   import Link from "./lib/Link.svelte";
   import NetWorth from "./lib/NetWorth.svelte";
   import Sankey from "./lib/Sankey.svelte";
@@ -10,7 +11,7 @@
   // that way. The query string is then dropped so a reload starts clean.
   const params = new URLSearchParams(location.search);
   let view = $state(
-    ["sankey", "transactions", "bills", "networth"].includes(params.get("view")) ? params.get("view") : "sankey"
+    ["sankey", "transactions", "budgets", "bills", "networth"].includes(params.get("view")) ? params.get("view") : "sankey"
   );
   const gmailResult = params.get("gmail");
   if (location.search) history.replaceState(null, "", location.pathname);
@@ -91,6 +92,9 @@
       >
         Transactions
       </button>
+      <button class:active={view === "budgets"} onclick={() => (view = "budgets")}>
+        Budgets
+      </button>
       <button class:active={view === "bills"} onclick={() => (view = "bills")}>
         Bills &amp; debt
       </button>
@@ -112,6 +116,8 @@
     <Sankey {month} {reloadKey} />
   {:else if view === "transactions"}
     <Transactions {month} {reloadKey} />
+  {:else if view === "budgets"}
+    <Budgets {reloadKey} />
   {:else if view === "networth"}
     <NetWorth {reloadKey} />
   {:else}

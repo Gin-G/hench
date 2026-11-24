@@ -88,6 +88,30 @@ openbao:
   keyPrefix: hench-user-
   k8sRole: hench
   k8sMount: kubernetes
+# ntfy, for budget alerts pushed to phones (templates/ntfy.yaml). Public on
+# its own hostname, outside Cloudflare Access; ntfy's own auth keeps it shut.
+ntfy:
+  enabled: true
+  image:
+    repository: binwiederhier/ntfy
+    tag: v2.11.0
+  fqdn: ntfy.nickknows.net
+  # Needed for instant delivery to iOS; empty to keep everything in-cluster
+  # (Android still gets pushes, iOS only when the app is opened).
+  upstreamBaseUrl: https://ntfy.sh
+  # The backend's publish token: OpenBao kv path and property.
+  secretPath: hench/ntfy
+  tokenKey: token
+  storage:
+    size: 1Gi
+    storageClass: rook-ceph-block
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
 # Namespace-local firewall. BasicAuth is enforced at the ingress, so without
 # this anything already running in the cluster can reach the API and the
 # database directly and route around it entirely.

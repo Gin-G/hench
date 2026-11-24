@@ -128,6 +128,21 @@ Plaid + Fernet secrets come from the ESO-managed config secret.
   value: {{ .Values.openbao.k8sRole | quote }}
 - name: OPENBAO_K8S_MOUNT
   value: {{ .Values.openbao.k8sMount | quote }}
+- name: HENCH_APP_URL
+  value: {{ printf "https://%s" .Values.frontend.fqdn | quote }}
+{{- if .Values.ntfy.enabled }}
+# Budget alerts: published in-cluster, subscribed to at the public address.
+- name: NTFY_URL
+  value: {{ printf "http://%s-ntfy.%s.svc.cluster.local" .Values.app.name .Release.Namespace | quote }}
+- name: NTFY_PUBLIC_URL
+  value: {{ printf "https://%s" .Values.ntfy.fqdn | quote }}
+- name: NTFY_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.app.name }}-ntfy
+      key: NTFY_TOKEN
+      optional: true
+{{- end }}
 - name: LOG_LEVEL
   value: {{ .Values.backend.env.LOG_LEVEL | quote }}
 - name: HOST

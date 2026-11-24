@@ -95,3 +95,34 @@ OpenBao.
 Data from before there were users belongs to `cfAccess.ownerEmail`, or the
 first allowed email when that is empty. The Longmont utility login is that
 user's too; a Gmail-read bill (Xcel) is read for whoever connected Gmail.
+
+## Budgets and phone alerts
+
+The Budgets tab sets a monthly limit on a spending group or one item in it
+(the cash-flow chart's names), shows what is spent and left with a marker for
+an even pace, and suggests an amount a little under the last three months'
+average. After every sync (nightly, "Sync now", or a Plaid webhook) each new
+charge against a budget is pushed to the user's phone through ntfy, with what
+is left of the budget for the month.
+
+ntfy runs in the chart (`templates/ntfy.yaml`) at `ntfy.fqdn`, outside
+Cloudflare Access. Nothing is allowed on it by default; phones may read
+`hench-*` topics (each user's topic name is random, shown on the Budgets tab),
+and only the backend's token may publish. One-time setup once the pod is up:
+
+```sh
+NS=hench; POD=$(kubectl -n $NS get pod -l app=hench-ntfy -o name)
+kubectl -n $NS exec $POD -- sh -c 'NTFY_PASSWORD=$(head -c 24 /dev/urandom | base64) \
+  ntfy user add --config /etc/ntfy/server.yml hench-publisher'
+kubectl -n $NS exec $POD -- ntfy access --config /etc/ntfy/server.yml hench-publisher 'hench-*' write-only
+kubectl -n $NS exec $POD -- ntfy access --config /etc/ntfy/server.yml everyone 'hench-*' read-only
+kubectl -n $NS exec $POD -- ntfy token add --config /etc/ntfy/server.yml hench-publisher
+# Put the tk_... token in OpenBao; the ExternalSecret hands it to the backend.
+bao kv put kv/hench/ntfy token=tk_...
+kubectl -n $NS rollout restart deploy/hench-backend
+```
+
+Then on the phone: install ntfy, add a subscription on the server
+`https://ntfy.nickknows.net` with the topic from the Budgets tab, and press
+"Send a test". Charges are remembered once looked at, so a sync never pushes
+the same charge twice, and a push that fails is retried on the next sync.

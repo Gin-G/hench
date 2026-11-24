@@ -112,6 +112,16 @@ export const api = {
     }),
   // Net worth, and what's owned and owed outside Plaid.
   networth: () => req("/networth"),
+
+  // Budgets
+  budgets: () => req("/budgets"),
+  createBudget: (budget) => req("/budgets", { method: "POST", body: JSON.stringify(budget) }),
+  updateBudget: (id, changes) =>
+    req(`/budgets/${id}`, { method: "PATCH", body: JSON.stringify(changes) }),
+  deleteBudget: (id) => req(`/budgets/${id}`, { method: "DELETE" }),
+  setBudgetAlerts: (enabled) =>
+    req("/budgets/alerts", { method: "PUT", body: JSON.stringify({ enabled }) }),
+  testBudgetAlert: () => req("/budgets/alerts/test", { method: "POST" }),
   createHolding: (holding) =>
     req("/holdings", { method: "POST", body: JSON.stringify(holding) }),
   updateHolding: (id, changes) =>

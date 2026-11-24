@@ -1,0 +1,219 @@
+{{- if .Values.ntfy.enabled }}
+{{- /*
+ntfy: push notifications for budget alerts. Its own hostname, outside
+Cloudflare Access (the phone app cannot get through Access), and locked down
+by ntfy's own auth instead: nothing is allowed by default, phones may read
+hench-* topics (each user's topic name is random), and only the backend's
+token may publish to them. README "Budget alerts" has the one-time setup.
+
+Labelled app: <name>-ntfy rather than app: <name>, so the database policy,
+which admits app: <name>, does not admit it.
+*/}}
+{{- $name := printf "%s-ntfy" .Values.app.name }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ $name }}
+    group: {{ .Values.app.group }}
+data:
+  server.yml: |
+    base-url: "https://{{ .Values.ntfy.fqdn }}"
+    listen-http: ":8080"
+    behind-proxy: true
+    cache-file: /var/lib/ntfy/cache.db
+    cache-duration: "72h"
+    auth-file: /var/lib/ntfy/auth.db
+    auth-default-access: deny-all
+    enable-signup: false
+    enable-login: true
+    {{- with .Values.ntfy.upstreamBaseUrl }}
+    # iOS only wakes for a self-hosted server through ntfy.sh's push relay;
+    # what goes to it is a poll request, not the message.
+    upstream-base-url: {{ . | quote }}
+    {{- end }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ $name }}
+    group: {{ .Values.app.group }}
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with .Values.ntfy.storage.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.ntfy.storage.size }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ $name }}
+    group: {{ .Values.app.group }}
+spec:
+  replicas: 1
+  # One pod owns the SQLite files on the RWO volume.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: {{ $name }}
+  template:
+    metadata:
+      labels:
+        app: {{ $name }}
+        group: {{ .Values.app.group }}
+      annotations:
+        checksum/config: {{ .Values.ntfy | toJson | sha256sum }}
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: ntfy
+          image: "{{ .Values.ntfy.image.repository }}:{{ .Values.ntfy.image.tag }}"
+          args: ["serve", "--config", "/etc/ntfy/server.yml"]
+          ports:
+            - containerPort: 8080
+              name: http
+          livenessProbe:
+            httpGet:
+              path: /v1/health
+              port: http
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /v1/health
+              port: http
+            periodSeconds: 10
+          volumeMounts:
+            - name: config
+              mountPath: /etc/ntfy
+              readOnly: true
+            - name: data
+              mountPath: /var/lib/ntfy
+          resources:
+            {{- toYaml .Values.ntfy.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $name }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ $name }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ $name }}
+    group: {{ .Values.app.group }}
+spec:
+  type: ClusterIP
+  selector:
+    app: {{ $name }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ $name }}
+    group: {{ .Values.app.group }}
+  annotations:
+    cert-manager.io/cluster-issuer: {{ .Values.ingress.clusterIssuer | quote }}
+    external-dns.alpha.kubernetes.io/target: {{ .Values.ingress.externalDnsTarget | quote }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  tls:
+    - hosts:
+        - {{ .Values.ntfy.fqdn }}
+      secretName: {{ $name }}-tls
+  rules:
+    - host: {{ .Values.ntfy.fqdn }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $name }}
+                port:
+                  number: 80
+{{- if .Values.networkPolicy.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ $name }}
+    group: {{ .Values.app.group }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ $name }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # Phones, through the ingress controller.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressControllerNamespace }}
+        # The backend and the sync job, publishing.
+        - podSelector:
+            matchLabels:
+              app: {{ .Values.app.name }}
+        {{- range .Values.networkPolicy.nodeCIDRs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: 8080
+{{- end }}
+---
+# The backend's publish token, from OpenBao. Optional in the pods, so they
+# start before it exists; alerts then fail and are retried on later syncs.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: {{ $name }}-eso
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hench.labels" . | nindent 4 }}
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: {{ .Values.secrets.store.name }}
+    kind: {{ .Values.secrets.store.kind }}
+  target:
+    name: {{ $name }}
+    creationPolicy: Owner
+  data:
+    - secretKey: NTFY_TOKEN
+      remoteRef:
+        key: {{ .Values.ntfy.secretPath }}
+        property: {{ .Values.ntfy.tokenKey }}
+{{- end }}

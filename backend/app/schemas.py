@@ -668,3 +668,75 @@ class NetWorthResponse(BaseModel):
     history: list[NetWorthPoint]
     months: list[MonthFlow]
     commitments: list[CommitmentLine]
+
+
+# --- Budgets -----------------------------------------------------------------
+class BudgetIn(BaseModel):
+    group: str = Field(min_length=1)
+    # None = the whole group.
+    item: str | None = None
+    amount: Decimal = Field(gt=0)
+
+
+class BudgetUpdate(BaseModel):
+    amount: Decimal = Field(gt=0)
+
+
+class BudgetCharge(BaseModel):
+    transaction_id: str
+    date: date
+    name: str
+    amount: Decimal
+    pending: bool
+
+
+class BudgetOut(BaseModel):
+    id: int
+    group: str
+    item: str | None
+    name: str
+    amount: Decimal
+    spent: Decimal
+    # Negative once over.
+    remaining: Decimal
+    # What would be spent by today at an even pace through the month.
+    pace: Decimal
+    # The biggest charges this month, largest first.
+    charges: list[BudgetCharge]
+
+
+class CategoryItem(BaseModel):
+    item: str
+    # Spent a month on average over the last three full months.
+    average: Decimal
+
+
+class CategoryGroup(BaseModel):
+    group: str
+    average: Decimal
+    items: list[CategoryItem]
+
+
+class AlertSettings(BaseModel):
+    # False when the server has no ntfy configured.
+    available: bool
+    enabled: bool
+    server: str | None = None
+    topic: str | None = None
+    # Opens the topic in a browser, or the ntfy app where it is installed.
+    subscribe_url: str | None = None
+
+
+class BudgetsResponse(BaseModel):
+    month: str
+    days_in_month: int
+    day: int
+    budgets: list[BudgetOut]
+    total_amount: Decimal
+    total_spent: Decimal
+    categories: list[CategoryGroup]
+    alerts: AlertSettings
+
+
+class AlertSettingsIn(BaseModel):
+    enabled: bool

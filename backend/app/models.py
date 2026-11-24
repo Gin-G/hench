@@ -81,6 +81,12 @@ class User(Base):
     email: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     wrapped_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     key_provider: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Budget alerts are pushed to this ntfy topic: random, so the name itself
+    # is what keeps it to the phone subscribed to it. Made on first use.
+    ntfy_topic: Mapped[str | None] = mapped_column(String, nullable=True)
+    alerts_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -225,6 +231,9 @@ class Transaction(Owned, Base):
     name: Mapped[str | None] = mapped_column(Encrypted, nullable=True)
     merchant_name: Mapped[str | None] = mapped_column(Encrypted, nullable=True)
     pending: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # On a posted transaction, the pending one it replaces (which Plaid
+    # removes), so the same charge is not alerted on twice.
+    pending_transaction_id: Mapped[str | None] = mapped_column(String, nullable=True)
     payment_channel: Mapped[str | None] = mapped_column(String, nullable=True)
 
     # Plaid Personal Finance Category, as delivered by Plaid (may be
@@ -649,6 +658,45 @@ class Rule(Owned, Base):
     priority: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class Budget(Owned, Base):
+    """A monthly limit on one spending group ("Shopping") or one item in it
+    ("Costco, Target & Walmart"), as the cash-flow chart names them."""
+
+    __tablename__ = "budgets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    group: Mapped[str] = mapped_column(String, nullable=False)
+    # None = the whole group.
+    item: Mapped[str | None] = mapped_column(String, nullable=True)
+    amount: Mapped[Decimal] = mapped_column(Money, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    # One budget per group or item; NULLS NOT DISTINCT so a group's own
+    # (item None) counts too.
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "group", "item", postgresql_nulls_not_distinct=True
+        ),
+    )
+
+
+class AlertedTransaction(Owned, Base):
+    """A transaction already looked at for budget alerts, alerted on or not.
+
+    Kept apart from transactions because a pending charge's row is deleted
+    when it posts, and the posted one must still be known as seen.
+    """
+
+    __tablename__ = "alerted_transactions"
+
+    transaction_id: Mapped[str] = mapped_column(String, primary_key=True)
+    seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
